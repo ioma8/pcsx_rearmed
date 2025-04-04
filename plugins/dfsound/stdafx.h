@@ -15,6 +15,9 @@
  *                                                                         *
  ***************************************************************************/
 
+#ifndef __P_STDAFX_H__
+#define __P_STDAFX_H__
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h> 
@@ -29,4 +32,14 @@
 #define INLINE static inline
 #endif
 
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+#define HTOLE16(x) __builtin_bswap16(x)
+#define LE16TOH(x) __builtin_bswap16(x)
+#else
+#define HTOLE16(x) (x)
+#define LE16TOH(x) (x)
+#endif
+
 #include "psemuxa.h"
+
+#endif /* __P_STDAFX_H__ */

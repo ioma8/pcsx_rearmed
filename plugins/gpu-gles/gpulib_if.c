@@ -16,6 +16,7 @@
  *                                                                         *
  ***************************************************************************/
 
+#include "gpuStdafx.h"
 #include "gpuDraw.c"
 #include "gpuTexture.c"
 #include "gpuPrim.c"
@@ -26,10 +27,10 @@ short g_m1,g_m2,g_m3;
 short DrawSemiTrans;
 
 short          ly0,lx0,ly1,lx1,ly2,lx2,ly3,lx3;        // global psx vertex coords
-long           GlobalTextAddrX,GlobalTextAddrY,GlobalTextTP;
-long           GlobalTextREST,GlobalTextABR,GlobalTextPAGE;
+int            GlobalTextAddrX,GlobalTextAddrY,GlobalTextTP;
+int            GlobalTextREST,GlobalTextABR,GlobalTextPAGE;
 
-unsigned long dwGPUVersion;
+unsigned int  dwGPUVersion;
 int           iGPUHeight=512;
 int           iGPUHeightMask=511;
 int           GlobalTextIL;
@@ -41,15 +42,15 @@ GLfloat         gl_z=0.0f;
 BOOL            bNeedInterlaceUpdate;
 BOOL            bNeedRGB24Update;
 BOOL            bChangeWinMode;
-long            lGPUstatusRet;
-unsigned long   ulGPUInfoVals[16];
+int             lGPUstatusRet;
+unsigned int    ulGPUInfoVals[16];
 VRAMLoad_t      VRAMWrite;
 VRAMLoad_t      VRAMRead;
 int             iDataWriteMode;
 int             iDataReadMode;
 
-long            lClearOnSwap;
-long            lClearOnSwapColor;
+int             lClearOnSwap;
+int             lClearOnSwapColor;
 BOOL            bSkipNextFrame;
 
 PSXDisplay_t    PSXDisplay;
@@ -195,13 +196,13 @@ void updateFrontDisplay(void)
 
 static void ChangeDispOffsetsX(void)                  // CENTER X
 {
-long lx,l;short sO;
+int lx,l;short sO;
 
 if(!PSXDisplay.Range.x1) return;                      // some range given?
 
 l=PSXDisplay.DisplayMode.x;
 
-l*=(long)PSXDisplay.Range.x1;                         // some funky calculation
+l*=(int)PSXDisplay.Range.x1;                         // some funky calculation
 l/=2560;lx=l;l&=0xfffffff8;
 
 if(l==PreviousPSXDisplay.Range.x1) return;            // some change?
@@ -312,7 +313,7 @@ if(bUp) updateDisplay();                              // yeah, real update (swap
 }
 
 #define GPUwriteStatus_ext GPUwriteStatus_ext // for gpulib to see this
-void GPUwriteStatus_ext(unsigned long gdata)
+void GPUwriteStatus_ext(unsigned int gdata)
 {
 switch((gdata>>24)&0xff)
  {
@@ -513,10 +514,15 @@ void renderer_notify_res_change(void)
 {
 }
 
+void renderer_notify_scanout_change(int x, int y)
+{
+}
+
 extern const unsigned char cmd_lengths[256];
 
 // XXX: mostly dupe code from soft peops
-int do_cmd_list(unsigned int *list, int list_len, int *last_cmd)
+int do_cmd_list(uint32_t *list, int list_len,
+ int *cycles_sum_out, int *cycles_last, int *last_cmd)
 {
   unsigned int cmd, len;
   unsigned int *list_start = list;
@@ -621,7 +627,7 @@ void renderer_sync_ecmds(uint32_t *ecmds)
   cmdSTP((unsigned char *)&ecmds[6]);
 }
 
-void renderer_update_caches(int x, int y, int w, int h)
+void renderer_update_caches(int x, int y, int w, int h, int state_changed)
 {
  VRAMWrite.x = x;
  VRAMWrite.y = y;
@@ -649,19 +655,22 @@ int vout_finish(void)
   return 0;
 }
 
-void vout_update(void)
+int vout_update(void)
 {
  if(PSXDisplay.Interlaced)                            // interlaced mode?
  {
   if(PSXDisplay.DisplayMode.x>0 && PSXDisplay.DisplayMode.y>0)
    {
     updateDisplay();                                  // -> swap buffers (new frame)
+    return 1;
    }
  }
  else if(bRenderFrontBuffer)                          // no interlace mode? and some stuff in front has changed?
  {
   updateFrontDisplay();                               // -> update front buffer
+  return 1;
  }
+ return 0;
 }
 
 void vout_blank(void)
@@ -674,7 +683,7 @@ void vout_set_config(const struct rearmed_cbs *cbs)
 
 static struct rearmed_cbs *cbs;
 
-long GPUopen(void **dpy)
+long GPUopen(unsigned long *disp, char *cap, char *cfg)
 {
  int ret;
 
@@ -733,7 +742,7 @@ void renderer_set_config(const struct rearmed_cbs *cbs_)
  if (is_opened && cbs->gles_display != NULL && cbs->gles_surface != NULL) {
   // HACK..
   GPUclose();
-  GPUopen(NULL);
+  GPUopen(NULL, NULL, NULL);
  }
 
  set_vram(gpu.vram);
@@ -768,4 +777,12 @@ static void fps_update(void)
   snprintf(buf,sizeof(buf),"%3d",cbs->cpu_usage);
   DisplayText(buf, 1);
  }
+}
+
+void renderer_sync(void)
+{
+}
+
+void renderer_notify_update_lace(int updated)
+{
 }

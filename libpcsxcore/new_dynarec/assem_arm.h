@@ -16,7 +16,6 @@
 
 #define HOST_REGS 13
 #define HOST_CCREG 10
-#define HOST_BTREG 8
 #define EXCLUDE_REG 11
 
 // Note: FP is set to &dynarec_local when executing generated code.
@@ -33,8 +32,11 @@
 #define PREFERRED_REG_FIRST 4
 #define PREFERRED_REG_LAST  9
 
+#define DRC_DBG_REGMASK CALLER_SAVE_REGS
+
 extern char *invc_ptr;
 
+// note: max due to branch encoding: arm 32M, arm64 128M
 #define TARGET_SIZE_2 24 // 2^24 = 16 megabytes
 
 struct tramp_insns

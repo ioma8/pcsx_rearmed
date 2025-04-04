@@ -31,11 +31,10 @@ extern "C" {
 
 typedef long (CALLBACK *GPUopen)(unsigned long *, char *, char *);
 typedef long (CALLBACK *SPUopen)(void);
-typedef long (CALLBACK *PADopen)(unsigned long *);
-typedef long (CALLBACK *NETopen)(unsigned long *);
 typedef long (CALLBACK *SIO1open)(unsigned long *);
 
 #include "spu.h"
+#include "gpu.h"
 #include "decode_xa.h"
 
 int LoadPlugins();
@@ -58,33 +57,16 @@ typedef void (CALLBACK* GPUwriteDataMem)(uint32_t *, int);
 typedef uint32_t (CALLBACK* GPUreadStatus)(void);
 typedef uint32_t (CALLBACK* GPUreadData)(void);
 typedef void (CALLBACK* GPUreadDataMem)(uint32_t *, int);
-typedef long (CALLBACK* GPUdmaChain)(uint32_t *,uint32_t);
+typedef long (CALLBACK* GPUdmaChain)(uint32_t *, uint32_t, uint32_t *, int32_t *);
 typedef void (CALLBACK* GPUupdateLace)(void);
-typedef long (CALLBACK* GPUconfigure)(void);
-typedef long (CALLBACK* GPUtest)(void);
-typedef void (CALLBACK* GPUabout)(void);
-typedef void (CALLBACK* GPUmakeSnapshot)(void);
-typedef void (CALLBACK* GPUkeypressed)(int);
-typedef void (CALLBACK* GPUdisplayText)(char *);
-typedef struct {
-	uint32_t ulFreezeVersion;
-	uint32_t ulStatus;
-	uint32_t ulControl[256];
-	unsigned char psxVRam[1024*512*2];
-} GPUFreeze_t;
 typedef long (CALLBACK* GPUfreeze)(uint32_t, GPUFreeze_t *);
-typedef long (CALLBACK* GPUgetScreenPic)(unsigned char *);
-typedef long (CALLBACK* GPUshowScreenPic)(unsigned char *);
-typedef void (CALLBACK* GPUclearDynarec)(void (CALLBACK *callback)(void));
 typedef void (CALLBACK* GPUvBlank)(int, int);
+typedef void (CALLBACK* GPUgetScreenInfo)(int *, int *);
 
 // GPU function pointers
 extern GPUupdateLace    GPU_updateLace;
 extern GPUinit          GPU_init;
 extern GPUshutdown      GPU_shutdown; 
-extern GPUconfigure     GPU_configure;
-extern GPUtest          GPU_test;
-extern GPUabout         GPU_about;
 extern GPUopen          GPU_open;
 extern GPUclose         GPU_close;
 extern GPUreadStatus    GPU_readStatus;
@@ -94,116 +76,56 @@ extern GPUwriteStatus   GPU_writeStatus;
 extern GPUwriteData     GPU_writeData;
 extern GPUwriteDataMem  GPU_writeDataMem;
 extern GPUdmaChain      GPU_dmaChain;
-extern GPUkeypressed    GPU_keypressed;
-extern GPUdisplayText   GPU_displayText;
-extern GPUmakeSnapshot  GPU_makeSnapshot;
 extern GPUfreeze        GPU_freeze;
-extern GPUgetScreenPic  GPU_getScreenPic;
-extern GPUshowScreenPic GPU_showScreenPic;
-extern GPUclearDynarec  GPU_clearDynarec;
 extern GPUvBlank        GPU_vBlank;
+extern GPUgetScreenInfo GPU_getScreenInfo;
 
-// CD-ROM Functions
-typedef long (CALLBACK* CDRinit)(void);
-typedef long (CALLBACK* CDRshutdown)(void);
-typedef long (CALLBACK* CDRopen)(void);
-typedef long (CALLBACK* CDRclose)(void);
-typedef long (CALLBACK* CDRgetTN)(unsigned char *);
-typedef long (CALLBACK* CDRgetTD)(unsigned char, unsigned char *);
-typedef boolean (CALLBACK* CDRreadTrack)(unsigned char *);
-typedef unsigned char* (CALLBACK* CDRgetBuffer)(void);
-typedef unsigned char* (CALLBACK* CDRgetBufferSub)(void);
-typedef long (CALLBACK* CDRconfigure)(void);
-typedef long (CALLBACK* CDRtest)(void);
-typedef void (CALLBACK* CDRabout)(void);
-typedef long (CALLBACK* CDRplay)(unsigned char *);
-typedef long (CALLBACK* CDRstop)(void);
-typedef long (CALLBACK* CDRsetfilename)(char *);
+// CD-ROM
 struct CdrStat {
-	uint32_t Type;
-	uint32_t Status;
-	unsigned char Time[3];
+	uint32_t Type; // DATA, CDDA
+	uint32_t Status; // same as cdr.StatP
+	unsigned char Time_[3]; // unused
 };
-typedef long (CALLBACK* CDRgetStatus)(struct CdrStat *);
-typedef char* (CALLBACK* CDRgetDriveLetter)(void);
-struct SubQ {
-	char res0[12];
-	unsigned char ControlAndADR;
-	unsigned char TrackNumber;
-	unsigned char IndexNumber;
-	unsigned char TrackRelativeAddress[3];
-	unsigned char Filler;
-	unsigned char AbsoluteAddress[3];
-	unsigned char CRC[2];
-	char res1[72];
-};
-typedef long (CALLBACK* CDRreadCDDA)(unsigned char, unsigned char, unsigned char, unsigned char *);
-typedef long (CALLBACK* CDRgetTE)(unsigned char, unsigned char *, unsigned char *, unsigned char *);
 
-// CD-ROM function pointers
-extern CDRinit               CDR_init;
-extern CDRshutdown           CDR_shutdown;
-extern CDRopen               CDR_open;
-extern CDRclose              CDR_close; 
-extern CDRtest               CDR_test;
-extern CDRgetTN              CDR_getTN;
-extern CDRgetTD              CDR_getTD;
-extern CDRreadTrack          CDR_readTrack;
-extern CDRgetBuffer          CDR_getBuffer;
-extern CDRgetBufferSub       CDR_getBufferSub;
-extern CDRplay               CDR_play;
-extern CDRstop               CDR_stop;
-extern CDRgetStatus          CDR_getStatus;
-extern CDRgetDriveLetter     CDR_getDriveLetter;
-extern CDRconfigure          CDR_configure;
-extern CDRabout              CDR_about;
-extern CDRsetfilename        CDR_setfilename;
-extern CDRreadCDDA           CDR_readCDDA;
-extern CDRgetTE              CDR_getTE;
+int CDR__getStatus(struct CdrStat *stat);
 
 // SPU Functions
 typedef long (CALLBACK* SPUinit)(void);				
 typedef long (CALLBACK* SPUshutdown)(void);	
 typedef long (CALLBACK* SPUclose)(void);			
-typedef void (CALLBACK* SPUplaySample)(unsigned char);		
 typedef void (CALLBACK* SPUwriteRegister)(unsigned long, unsigned short, unsigned int);
-typedef unsigned short (CALLBACK* SPUreadRegister)(unsigned long);
-typedef void (CALLBACK* SPUwriteDMA)(unsigned short);
-typedef unsigned short (CALLBACK* SPUreadDMA)(void);
+typedef unsigned short (CALLBACK* SPUreadRegister)(unsigned long, unsigned int);
 typedef void (CALLBACK* SPUwriteDMAMem)(unsigned short *, int, unsigned int);
 typedef void (CALLBACK* SPUreadDMAMem)(unsigned short *, int, unsigned int);
 typedef void (CALLBACK* SPUplayADPCMchannel)(xa_decode_t *, unsigned int, int);
-typedef void (CALLBACK* SPUregisterCallback)(void (CALLBACK *callback)(void));
+typedef void (CALLBACK* SPUregisterCallback)(void (CALLBACK *callback)(int));
 typedef void (CALLBACK* SPUregisterScheduleCb)(void (CALLBACK *callback)(unsigned int cycles_after));
-typedef long (CALLBACK* SPUconfigure)(void);
-typedef long (CALLBACK* SPUtest)(void);
-typedef void (CALLBACK* SPUabout)(void);
 typedef struct {
+	unsigned char PluginName[8];
+	uint32_t PluginVersion;
+	uint32_t Size;
+} SPUFreezeHdr_t;
+typedef struct SPUFreeze {
 	unsigned char PluginName[8];
 	uint32_t PluginVersion;
 	uint32_t Size;
 	unsigned char SPUPorts[0x200];
 	unsigned char SPURam[0x80000];
 	xa_decode_t xa;
-	unsigned char *SPUInfo;
+	unsigned char *unused;
 } SPUFreeze_t;
-typedef long (CALLBACK* SPUfreeze)(uint32_t, SPUFreeze_t *, uint32_t);
-typedef void (CALLBACK* SPUasync)(uint32_t, uint32_t);
+typedef long (CALLBACK* SPUfreeze)(unsigned int, struct SPUFreeze *, unsigned int);
+typedef void (CALLBACK* SPUasync)(unsigned int, unsigned int);
 typedef int  (CALLBACK* SPUplayCDDAchannel)(short *, int, unsigned int, int);
+typedef void (CALLBACK* SPUsetCDvol)(unsigned char, unsigned char, unsigned char, unsigned char, unsigned int);
 
 // SPU function pointers
-extern SPUconfigure        SPU_configure;
-extern SPUabout            SPU_about;
 extern SPUinit             SPU_init;
 extern SPUshutdown         SPU_shutdown;
-extern SPUtest             SPU_test;
 extern SPUopen             SPU_open;
 extern SPUclose            SPU_close;
-extern SPUplaySample       SPU_playSample;
 extern SPUwriteRegister    SPU_writeRegister;
 extern SPUreadRegister     SPU_readRegister;
-extern SPUwriteDMA         SPU_writeDMA;
-extern SPUreadDMA          SPU_readDMA;
 extern SPUwriteDMAMem      SPU_writeDMAMem;
 extern SPUreadDMAMem       SPU_readDMAMem;
 extern SPUplayADPCMchannel SPU_playADPCMchannel;
@@ -212,103 +134,16 @@ extern SPUregisterCallback SPU_registerCallback;
 extern SPUregisterScheduleCb SPU_registerScheduleCb;
 extern SPUasync            SPU_async;
 extern SPUplayCDDAchannel  SPU_playCDDAchannel;
+extern SPUsetCDvol         SPU_setCDvol;
 
 // PAD Functions
-typedef long (CALLBACK* PADconfigure)(void);
-typedef void (CALLBACK* PADabout)(void);
-typedef long (CALLBACK* PADinit)(long);
-typedef long (CALLBACK* PADshutdown)(void);	
-typedef long (CALLBACK* PADtest)(void);		
-typedef long (CALLBACK* PADclose)(void);
-typedef long (CALLBACK* PADquery)(void);
-typedef long (CALLBACK* PADreadPort1)(PadDataS*);
-typedef long (CALLBACK* PADreadPort2)(PadDataS*);
-typedef long (CALLBACK* PADkeypressed)(void);
-typedef unsigned char (CALLBACK* PADstartPoll)(int);
-typedef unsigned char (CALLBACK* PADpoll)(unsigned char);
-typedef void (CALLBACK* PADsetSensitive)(int);
+long PAD1_readPort(PadDataS *);
+unsigned char PAD1_startPoll(int);
+unsigned char PAD1_poll(unsigned char, int *);
 
-// PAD function pointers
-extern PADconfigure        PAD1_configure;
-extern PADabout            PAD1_about;
-extern PADinit             PAD1_init;
-extern PADshutdown         PAD1_shutdown;
-extern PADtest             PAD1_test;
-extern PADopen             PAD1_open;
-extern PADclose            PAD1_close;
-extern PADquery            PAD1_query;
-extern PADreadPort1        PAD1_readPort1;
-extern PADkeypressed       PAD1_keypressed;
-extern PADstartPoll        PAD1_startPoll;
-extern PADpoll             PAD1_poll;
-extern PADsetSensitive     PAD1_setSensitive;
-
-extern PADconfigure        PAD2_configure;
-extern PADabout            PAD2_about;
-extern PADinit             PAD2_init;
-extern PADshutdown         PAD2_shutdown;
-extern PADtest             PAD2_test;
-extern PADopen             PAD2_open;
-extern PADclose            PAD2_close;
-extern PADquery            PAD2_query;
-extern PADreadPort2        PAD2_readPort2;
-extern PADkeypressed       PAD2_keypressed;
-extern PADstartPoll        PAD2_startPoll;
-extern PADpoll             PAD2_poll;
-extern PADsetSensitive     PAD2_setSensitive;
-
-// NET Functions
-typedef long (CALLBACK* NETinit)(void);
-typedef long (CALLBACK* NETshutdown)(void);
-typedef long (CALLBACK* NETclose)(void);
-typedef long (CALLBACK* NETconfigure)(void);
-typedef long (CALLBACK* NETtest)(void);
-typedef void (CALLBACK* NETabout)(void);
-typedef void (CALLBACK* NETpause)(void);
-typedef void (CALLBACK* NETresume)(void);
-typedef long (CALLBACK* NETqueryPlayer)(void);
-typedef long (CALLBACK* NETsendData)(void *, int, int);
-typedef long (CALLBACK* NETrecvData)(void *, int, int);
-typedef long (CALLBACK* NETsendPadData)(void *, int);
-typedef long (CALLBACK* NETrecvPadData)(void *, int);
-
-typedef struct {
-	char EmuName[32];
-	char CdromID[9];	// ie. 'SCPH12345', no \0 trailing character
-	char CdromLabel[11];
-	void *psxMem;
-	GPUshowScreenPic GPU_showScreenPic;
-	GPUdisplayText GPU_displayText;
-	PADsetSensitive PAD_setSensitive;
-	char GPUpath[256];	// paths must be absolute
-	char SPUpath[256];
-	char CDRpath[256];
-	char MCD1path[256];
-	char MCD2path[256];
-	char BIOSpath[256];	// 'HLE' for internal bios
-	char Unused[1024];
-} netInfo;
-
-typedef long (CALLBACK* NETsetInfo)(netInfo *);
-typedef long (CALLBACK* NETkeypressed)(int);
-
-// NET function pointers 
-extern NETinit               NET_init;
-extern NETshutdown           NET_shutdown;
-extern NETopen               NET_open;
-extern NETclose              NET_close; 
-extern NETtest               NET_test;
-extern NETconfigure          NET_configure;
-extern NETabout              NET_about;
-extern NETpause              NET_pause;
-extern NETresume             NET_resume;
-extern NETqueryPlayer        NET_queryPlayer;
-extern NETsendData           NET_sendData;
-extern NETrecvData           NET_recvData;
-extern NETsendPadData        NET_sendPadData;
-extern NETrecvPadData        NET_recvPadData;
-extern NETsetInfo            NET_setInfo;
-extern NETkeypressed         NET_keypressed;
+long PAD2_readPort(PadDataS *);
+unsigned char PAD2_startPoll(int);
+unsigned char PAD2_poll(unsigned char, int *);
 
 #ifdef ENABLE_SIO1API
 
@@ -383,12 +218,16 @@ extern SIO1registerCallback   SIO1_registerCallback;
 
 #endif
 
-void CALLBACK clearDynarec(void);
-
 void SetIsoFile(const char *filename);
 const char *GetIsoFile(void);
 boolean UsingIso(void);
 void SetCdOpenCaseTime(s64 time);
+
+int padFreeze(void *f, int Mode);
+int padToggleAnalog(unsigned int index);
+
+extern void pl_gun_byte2(int port, unsigned char byte);
+extern void plat_trigger_vibrate(int pad, int low, int high);
 
 #ifdef __cplusplus
 }

@@ -48,13 +48,13 @@ int vout_finish(void)
   return 0;
 }
 
-void vout_update(void)
+int vout_update(void)
 {
   uint32_t *d;
   int i;
 
   SDL_LockSurface(screen);
-  if (gpu.status.rgb24)
+  if (gpu.status & PSX_GPU_STATUS_RGB24)
   {
     uint8_t *s;
     int y;
@@ -75,15 +75,16 @@ void vout_update(void)
   }
   SDL_UnlockSurface(screen);
   SDL_UpdateRect(screen, 0, 0, 1024, 512);
+  return 1;
 }
 
 void vout_blank(void)
 {
 }
 
-long GPUopen(void **dpy)
+long GPUopen(unsigned long *disp, char *cap, char *cfg)
 {
-  *dpy = x11_display;
+  *disp = (long)x11_display;
   return 0;
 }
 

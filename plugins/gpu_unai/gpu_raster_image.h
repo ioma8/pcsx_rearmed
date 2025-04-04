@@ -18,72 +18,83 @@
  *   51 Franklin Street, Fifth Floor, Boston, MA 02111-1307 USA.           *
  ***************************************************************************/
 
+#ifndef __GPU_UNAI_GPU_RASTER_IMAGE_H__
+#define __GPU_UNAI_GPU_RASTER_IMAGE_H__
+
 ///////////////////////////////////////////////////////////////////////////////
-INLINE void gpuLoadImage(void)
+#ifndef USE_GPULIB
+void gpuLoadImage(PtrUnion packet)
 {
 	u16 x0, y0, w0, h0;
-	x0 = PacketBuffer.U2[2] & 1023;
-	y0 = PacketBuffer.U2[3] & 511;
-	w0 = PacketBuffer.U2[4];
-	h0 = PacketBuffer.U2[5];
+	x0 = le16_to_u16(packet.U2[2]) & 1023;
+	y0 = le16_to_u16(packet.U2[3]) & 511;
+	w0 = le16_to_u16(packet.U2[4]);
+	h0 = le16_to_u16(packet.U2[5]);
 
 	if ((y0 + h0) > FRAME_HEIGHT)
 	{
 		h0 = FRAME_HEIGHT - y0;
 	}
 
-	FrameToWrite = ((w0)&&(h0));
+	gpu_unai.dma.FrameToWrite = ((w0)&&(h0));
 
-	px = 0;
-	py = 0;
-	x_end = w0;
-	y_end = h0;
-	pvram = &((u16*)GPU_FrameBuffer)[x0+(y0*1024)];
+	gpu_unai.dma.px = 0;
+	gpu_unai.dma.py = 0;
+	gpu_unai.dma.x_end = w0;
+	gpu_unai.dma.y_end = h0;
+	gpu_unai.dma.pvram = &gpu_unai.vram[x0+(y0*1024)];
 
-	GPU_GP1 |= 0x08000000;
+	gpu_unai.GPU_GP1 |= 0x08000000;
 }
+#endif // !USE_GPULIB
 
 ///////////////////////////////////////////////////////////////////////////////
-INLINE void gpuStoreImage(void)
+#ifndef USE_GPULIB
+void gpuStoreImage(PtrUnion packet)
 {
 	u16 x0, y0, w0, h0;
-	x0 = PacketBuffer.U2[2] & 1023;
-	y0 = PacketBuffer.U2[3] & 511;
-	w0 = PacketBuffer.U2[4];
-	h0 = PacketBuffer.U2[5];
+	x0 = le16_to_u16(packet.U2[2]) & 1023;
+	y0 = le16_to_u16(packet.U2[3]) & 511;
+	w0 = le16_to_u16(packet.U2[4]);
+	h0 = le16_to_u16(packet.U2[5]);
 
 	if ((y0 + h0) > FRAME_HEIGHT)
 	{
 		h0 = FRAME_HEIGHT - y0;
 	}
-	FrameToRead = ((w0)&&(h0));
+	gpu_unai.dma.FrameToRead = ((w0)&&(h0));
 
-	px = 0;
-	py = 0;
-	x_end = w0;
-	y_end = h0;
-	pvram = &((u16*)GPU_FrameBuffer)[x0+(y0*1024)];
+	gpu_unai.dma.px = 0;
+	gpu_unai.dma.py = 0;
+	gpu_unai.dma.x_end = w0;
+	gpu_unai.dma.y_end = h0;
+	gpu_unai.dma.pvram = &gpu_unai.vram[x0+(y0*1024)];
 	
-	GPU_GP1 |= 0x08000000;
+	gpu_unai.GPU_GP1 |= 0x08000000;
 }
+#endif // !USE_GPULIB
 
-INLINE void gpuMoveImage(void)
+void gpuMoveImage(PtrUnion packet)
 {
 	u32 x0, y0, x1, y1;
 	s32 w0, h0;
-	x0 = PacketBuffer.U2[2] & 1023;
-	y0 = PacketBuffer.U2[3] & 511;
-	x1 = PacketBuffer.U2[4] & 1023;
-	y1 = PacketBuffer.U2[5] & 511;
-	w0 = PacketBuffer.U2[6];
-	h0 = PacketBuffer.U2[7];
+	x0 = le16_to_u16(packet.U2[2]) & 1023;
+	y0 = le16_to_u16(packet.U2[3]) & 511;
+	x1 = le16_to_u16(packet.U2[4]) & 1023;
+	y1 = le16_to_u16(packet.U2[5]) & 511;
+	w0 = le16_to_u16(packet.U2[6]);
+	h0 = le16_to_u16(packet.U2[7]);
 
 	if( (x0==x1) && (y0==y1) ) return;
 	if ((w0<=0) || (h0<=0)) return;
 	
+	#ifdef ENABLE_GPU_LOG_SUPPORT
+		fprintf(stdout,"gpuMoveImage(x0=%u,y0=%u,x1=%u,y1=%u,w0=%d,h0=%d)\n",x0,y0,x1,y1,w0,h0);
+	#endif
+	
 	if (((y0+h0)>512)||((x0+w0)>1024)||((y1+h0)>512)||((x1+w0)>1024))
 	{
-		u16 *psxVuw=GPU_FrameBuffer;
+		le16_t *psxVuw=gpu_unai.vram;
 		s32 i,j;
 	    for(j=0;j<h0;j++)
 		 for(i=0;i<w0;i++)
@@ -92,8 +103,8 @@ INLINE void gpuMoveImage(void)
 	}
 	else if ((x0&1)||(x1&1))
 	{
-		u16 *lpDst, *lpSrc;
-		lpDst = lpSrc = (u16*)GPU_FrameBuffer;
+		le16_t *lpDst, *lpSrc;
+		lpDst = lpSrc = gpu_unai.vram;
 		lpSrc += FRAME_OFFSET(x0, y0);
 		lpDst += FRAME_OFFSET(x1, y1);
 		x1 = FRAME_WIDTH - w0;
@@ -106,8 +117,8 @@ INLINE void gpuMoveImage(void)
 	}
 	else
 	{
-		u32 *lpDst, *lpSrc;
-		lpDst = lpSrc = (u32*)(void*)GPU_FrameBuffer;
+		le32_t *lpDst, *lpSrc;
+		lpDst = lpSrc = (le32_t *)gpu_unai.vram;
 		lpSrc += ((FRAME_OFFSET(x0, y0))>>1);
 		lpDst += ((FRAME_OFFSET(x1, y1))>>1);
 		if (w0&1)
@@ -116,7 +127,7 @@ INLINE void gpuMoveImage(void)
 			w0>>=1;
 			if (!w0) {
 				do {
-					*((u16*)lpDst) = *((u16*)lpSrc);
+					*((le16_t*)lpDst) = *((le16_t*)lpSrc);
 					lpDst += x1;
 					lpSrc += x1;
 				} while (--h0);
@@ -124,7 +135,7 @@ INLINE void gpuMoveImage(void)
 			do {
 				x0=w0;
 				do { *lpDst++ = *lpSrc++; } while (--x0);
-				*((u16*)lpDst) = *((u16*)lpSrc);
+				*((le16_t*)lpDst) = *((le16_t*)lpSrc);
 				lpDst += x1;
 				lpSrc += x1;
 			} while (--h0);
@@ -143,14 +154,17 @@ INLINE void gpuMoveImage(void)
 	}
 }
 
-INLINE void gpuClearImage(void)
+void gpuClearImage(PtrUnion packet)
 {
 	s32   x0, y0, w0, h0;
-	x0 = PacketBuffer.S2[2];
-	y0 = PacketBuffer.S2[3];
-	w0 = PacketBuffer.S2[4] & 0x3ff;
-	h0 = PacketBuffer.S2[5] & 0x3ff;
-	 
+	x0 = le16_to_s16(packet.U2[2]);
+	y0 = le16_to_s16(packet.U2[3]);
+	w0 = le16_to_s16(packet.U2[4]) & 0x3ff;
+	h0 = le16_to_s16(packet.U2[5]) & 0x1ff;
+
+	x0 &= ~0xF;
+	w0 = ((w0 + 0xF) & ~0xF);
+
 	w0 += x0;
 	if (x0 < 0) x0 = 0;
 	if (w0 > FRAME_WIDTH) w0 = FRAME_WIDTH;
@@ -162,42 +176,30 @@ INLINE void gpuClearImage(void)
 	h0 -= y0;
 	if (h0 <= 0) return;
 
-	if (x0&1)
+	#ifdef ENABLE_GPU_LOG_SUPPORT
+		fprintf(stdout,"gpuClearImage(x0=%d,y0=%d,w0=%d,h0=%d)\n",x0,y0,w0,h0);
+	#endif
+
 	{
-		u16* pixel = (u16*)GPU_FrameBuffer + FRAME_OFFSET(x0, y0);
-		u16 rgb = GPU_RGB16(PacketBuffer.S4[0]);
-		y0 = FRAME_WIDTH - w0;
-		do {
-			x0=w0;
-			do { *pixel++ = rgb; } while (--x0);
-			pixel += y0;
-		} while (--h0);
-	}
-	else
-	{
-		u32* pixel = (u32*)(void*)GPU_FrameBuffer + ((FRAME_OFFSET(x0, y0))>>1);
-		u32 rgb = GPU_RGB16(PacketBuffer.S4[0]);
-		rgb |= (rgb<<16);
-		if (w0&1)
-		{
-			y0 = (FRAME_WIDTH - w0 +1)>>1;
-			w0>>=1;
-			do {
-				x0=w0;
-				do { *pixel++ = rgb; } while (--x0);
-				*((u16*)pixel) = (u16)rgb;
-				pixel += y0;
-			} while (--h0);
-		}
-		else
+		le32_t* pixel = (le32_t*)gpu_unai.vram + ((FRAME_OFFSET(x0, y0))>>1);
+		u32 _rgb = GPU_RGB16(le32_to_u32(packet.U4[0]));
+		le32_t rgb = u32_to_le32(_rgb | (_rgb << 16));
 		{
 			y0 = (FRAME_WIDTH - w0)>>1;
-			w0>>=1;
+			w0>>=3;
 			do {
 				x0=w0;
-				do { *pixel++ = rgb; } while (--x0);
+				do {
+					pixel[0] = rgb;
+					pixel[1] = rgb;
+					pixel[2] = rgb;
+					pixel[3] = rgb;
+					pixel += 4;
+				} while (--x0);
 				pixel += y0;
 			} while (--h0);
 		}
 	}
 }
+
+#endif /* __GPU_UNAI_GPU_RASTER_IMAGE_H__ */

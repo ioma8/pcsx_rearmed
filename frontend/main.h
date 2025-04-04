@@ -79,20 +79,9 @@ enum sched_action {
 	SACTION_GUN_A,
 	SACTION_GUN_B,
 	SACTION_GUN_TRIGGER2,
+	SACTION_ANALOG_TOGGLE,
 };
 
 #define SACTION_GUN_MASK (0x0f << SACTION_GUN_TRIGGER)
-
-static inline void emu_set_action(enum sched_action action_)
-{
-	extern enum sched_action emu_action, emu_action_old;
-	extern int stop;
-
-	if (action_ == SACTION_NONE)
-		emu_action_old = 0;
-	else if (action_ != emu_action_old)
-		stop = 1;
-	emu_action = action_;
-}
 
 #endif /* __FRONTEND_MAIN_H__ */

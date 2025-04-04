@@ -16,6 +16,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <pthread.h>
+#include <assert.h>
 
 #include "libpicofe/fonts.h"
 #include "libpicofe/input.h"
@@ -32,15 +33,22 @@
 #include "psemu_plugin_defs.h"
 #include "../libpcsxcore/new_dynarec/new_dynarec.h"
 #include "../libpcsxcore/psxmem_map.h"
-#include "../plugins/dfinput/externals.h"
+#include "../libpcsxcore/gpu.h"
+#include "../libpcsxcore/r3000a.h"
+#include "../libpcsxcore/psxcounters.h"
+#include "arm_features.h"
 
 #define HUD_HEIGHT 10
 
-int in_type1, in_type2;
-int in_a1[2] = { 127, 127 }, in_a2[2] = { 127, 127 };
+int in_type[8];
+int multitap1;
+int multitap2;
+int in_analog_left[8][2] = {{ 127, 127 },{ 127, 127 },{ 127, 127 },{ 127, 127 },{ 127, 127 },{ 127, 127 },{ 127, 127 },{ 127, 127 }};
+int in_analog_right[8][2] = {{ 127, 127 },{ 127, 127 },{ 127, 127 },{ 127, 127 },{ 127, 127 },{ 127, 127 },{ 127, 127 },{ 127, 127 }};
 int in_adev[2] = { -1, -1 }, in_adev_axis[2][2] = {{ 0, 1 }, { 0, 1 }};
 int in_adev_is_nublike[2];
-int in_keystate, in_state_gun;
+unsigned short in_keystate[8];
+int in_mouse[8][2];
 int in_enable_vibration;
 void *tsdev;
 void *pl_vout_buf;
@@ -113,9 +121,9 @@ static void print_fps(int h, int border)
 		pl_rearmed_cbs.vsps_cur);
 }
 
-static void print_cpu_usage(int w, int h, int border)
+static void print_cpu_usage(int x, int h)
 {
-	hud_printf(pl_vout_buf, pl_vout_w, pl_vout_w - border - 28,
+	hud_printf(pl_vout_buf, pl_vout_w, x - 28,
 		h - HUD_HEIGHT, "%3d", pl_rearmed_cbs.cpu_usage);
 }
 
@@ -128,11 +136,11 @@ static __attribute__((noinline)) void draw_active_chans(int vout_w, int vout_h)
 
 	static const unsigned short colors[2] = { 0x1fe3, 0x0700 };
 	unsigned short *dest = (unsigned short *)pl_vout_buf +
-		vout_w * (vout_h - HUD_HEIGHT) + vout_w / 2 - 192/2;
+		pl_vout_w * (vout_h - HUD_HEIGHT) + pl_vout_w / 2 - 192/2;
 	unsigned short *d, p;
 	int c, x, y;
 
-	if (dest == NULL || pl_vout_bpp != 16)
+	if (pl_vout_buf == NULL || pl_vout_bpp != 16)
 		return;
 
 	spu_get_debug_info(&live_chans, &run_chans, &fmod_chans, &noise_chans);
@@ -143,19 +151,17 @@ static __attribute__((noinline)) void draw_active_chans(int vout_w, int vout_h)
 		     (fmod_chans & (1<<c)) ? 0xf000 :
 		     (noise_chans & (1<<c)) ? 0x001f :
 		     colors[c & 1];
-		for (y = 0; y < 8; y++, d += vout_w)
+		for (y = 0; y < 8; y++, d += pl_vout_w)
 			for (x = 0; x < 8; x++)
 				d[x] = p;
 	}
 }
 
-static void print_hud(int w, int h, int xborder)
+static void print_hud(int x, int w, int h)
 {
-	if (h < 16)
+	if (h < 192)
 		return;
 
-	if (w < pl_vout_w)
-		xborder += (pl_vout_w - w) / 2;
 	if (h > pl_vout_h)
 		h = pl_vout_h;
 
@@ -163,12 +169,12 @@ static void print_hud(int w, int h, int xborder)
 		draw_active_chans(w, h);
 
 	if (hud_msg[0] != 0)
-		print_msg(h, xborder);
+		print_msg(h, x);
 	else if (g_opts & OPT_SHOWFPS)
-		print_fps(h, xborder);
+		print_fps(h, x);
 
 	if (g_opts & OPT_SHOWCPU)
-		print_cpu_usage(w, h, xborder);
+		print_cpu_usage(x + w, h);
 }
 
 /* update scaler target size according to user settings */
@@ -223,12 +229,12 @@ static void update_layer_size(int w, int h)
 		break;
 	}
 
-	g_layer_x = g_menuscreen_w / 2 - g_layer_w / 2;
-	g_layer_y = g_menuscreen_h / 2 - g_layer_h / 2;
-	if (g_layer_x < 0) g_layer_x = 0;
-	if (g_layer_y < 0) g_layer_y = 0;
-	if (g_layer_w > g_menuscreen_w) g_layer_w = g_menuscreen_w;
-	if (g_layer_h > g_menuscreen_h) g_layer_h = g_menuscreen_h;
+	if (g_scaler != SCALE_CUSTOM) {
+		g_layer_x = g_menuscreen_w / 2 - g_layer_w / 2;
+		g_layer_y = g_menuscreen_h / 2 - g_layer_h / 2;
+	}
+	if (g_layer_w > g_menuscreen_w * 2) g_layer_w = g_menuscreen_w * 2;
+	if (g_layer_h > g_menuscreen_h * 2) g_layer_h = g_menuscreen_h * 2;
 }
 
 // XXX: this is platform specific really
@@ -257,14 +263,10 @@ static void pl_vout_set_mode(int w, int h, int raw_w, int raw_h, int bpp)
 	if (pl_rearmed_cbs.only_16bpp)
 		vout_bpp = 16;
 
-	// don't use very low heights
-	if (vout_h < 192) {
-		buf_yoffset = (192 - vout_h) / 2;
-		vout_h = 192;
-	}
+	assert(vout_h >= 192);
 
 	pl_vout_scale_w = pl_vout_scale_h = 1;
-#ifdef __ARM_NEON__
+#ifdef HAVE_NEON32
 	if (soft_filter) {
 		if (resolution_ok(w * 2, h * 2) && bpp == 16) {
 			pl_vout_scale_w = 2;
@@ -302,14 +304,22 @@ static void pl_vout_set_mode(int w, int h, int raw_w, int raw_h, int bpp)
 	menu_notify_mode_change(pl_vout_w, pl_vout_h, pl_vout_bpp);
 }
 
-static void pl_vout_flip(const void *vram, int stride, int bgr24, int w, int h)
+static int flip_clear_counter;
+
+void pl_force_clear(void)
 {
-	static int doffs_old, clear_counter;
+	flip_clear_counter = 2;
+}
+
+static void pl_vout_flip(const void *vram_, int vram_ofs, int bgr24,
+	int x, int y, int w, int h, int dims_changed)
+{
 	unsigned char *dest = pl_vout_buf;
-	const unsigned short *src = vram;
+	const unsigned char *vram = vram_;
 	int dstride = pl_vout_w, h1 = h;
 	int h_full = pl_vout_h - pl_vout_yoffset;
-	int doffs;
+	int xoffs = 0, doffs;
+	int hwrapped;
 
 	pcnt_start(PCNT_BLIT);
 
@@ -323,25 +333,28 @@ static void pl_vout_flip(const void *vram, int stride, int bgr24, int w, int h)
 		goto out_hud;
 	}
 
-	// borders
-	doffs = (dstride - w * pl_vout_scale_w) / 2 & ~1;
+	assert(x + w <= pl_vout_w);
+	assert(y + h <= pl_vout_h);
 
-	if (doffs > doffs_old)
-		clear_counter = 2;
-	doffs_old = doffs;
+	// offset
+	xoffs = x * pl_vout_scale_w;
+	doffs = xoffs + y * pl_vout_scale_h * dstride;
 
-	if (clear_counter > 0) {
+	if (dims_changed)
+		flip_clear_counter = 3;
+
+	if (flip_clear_counter > 0) {
 		if (pl_plat_clear)
 			pl_plat_clear();
 		else
 			memset(pl_vout_buf, 0,
 				dstride * h_full * pl_vout_bpp / 8);
-		clear_counter--;
+		flip_clear_counter--;
 	}
 
 	if (pl_plat_blit)
 	{
-		pl_plat_blit(doffs, src, w, h, stride, bgr24);
+		pl_plat_blit(doffs, vram + vram_ofs, w, h, 1024, bgr24);
 		goto out_hud;
 	}
 
@@ -352,61 +365,98 @@ static void pl_vout_flip(const void *vram, int stride, int bgr24, int w, int h)
 
 	if (bgr24)
 	{
+		hwrapped = (vram_ofs & 2047) + w * 3 - 2048;
 		if (pl_rearmed_cbs.only_16bpp) {
-			for (; h1-- > 0; dest += dstride * 2, src += stride)
-			{
-				bgr888_to_rgb565(dest, src, w * 3);
+			for (; h1-- > 0; dest += dstride * 2) {
+				bgr888_to_rgb565(dest, vram + vram_ofs, w * 3);
+				vram_ofs = (vram_ofs + 2048) & 0xfffff;
+			}
+
+			if (hwrapped > 0) {
+				// this is super-rare so just fix-up
+				vram_ofs = (vram_ofs - h * 2048) & 0xff800;
+				dest -= dstride * 2 * h;
+				dest += (w - hwrapped / 3) * 2;
+				for (h1 = h; h1-- > 0; dest += dstride * 2) {
+					bgr888_to_rgb565(dest, vram + vram_ofs, hwrapped);
+					vram_ofs = (vram_ofs + 2048) & 0xfffff;
+				}
 			}
 		}
 		else {
 			dest -= doffs * 2;
 			dest += (doffs / 8) * 24;
 
-			for (; h1-- > 0; dest += dstride * 3, src += stride)
-			{
-				bgr888_to_rgb888(dest, src, w * 3);
+			for (; h1-- > 0; dest += dstride * 3) {
+				bgr888_to_rgb888(dest, vram + vram_ofs, w * 3);
+				vram_ofs = (vram_ofs + 2048) & 0xfffff;
+			}
+
+			if (hwrapped > 0) {
+				vram_ofs = (vram_ofs - h * 2048) & 0xff800;
+				dest -= dstride * 3 * h;
+				dest += w * 3 - hwrapped;
+				for (h1 = h; h1-- > 0; dest += dstride * 3) {
+					bgr888_to_rgb888(dest, vram + vram_ofs, hwrapped);
+					vram_ofs = (vram_ofs + 2048) & 0xfffff;
+				}
 			}
 		}
 	}
-#ifdef __ARM_NEON__
+#ifdef HAVE_NEON32
 	else if (soft_filter == SOFT_FILTER_SCALE2X && pl_vout_scale_w == 2)
 	{
-		neon_scale2x_16_16(src, (void *)dest, w,
-			stride * 2, dstride * 2, h);
+		neon_scale2x_16_16((const void *)(vram + vram_ofs), (void *)dest, w,
+			2048, dstride * 2, h);
 	}
 	else if (soft_filter == SOFT_FILTER_EAGLE2X && pl_vout_scale_w == 2)
 	{
-		neon_eagle2x_16_16(src, (void *)dest, w,
-			stride * 2, dstride * 2, h);
+		neon_eagle2x_16_16((const void *)(vram + vram_ofs), (void *)dest, w,
+			2048, dstride * 2, h);
 	}
 	else if (scanlines != 0 && scanline_level != 100)
 	{
-		int l = scanline_level * 2048 / 100;
-		int stride_0 = pl_vout_scale_h >= 2 ? 0 : stride;
+		int h2, l = scanline_level * 2048 / 100;
+		int stride_0 = pl_vout_scale_h >= 2 ? 0 : 2048;
 
 		h1 *= pl_vout_scale_h;
-		for (; h1 >= 2; h1 -= 2)
+		while (h1 > 0)
 		{
-			bgr555_to_rgb565(dest, src, w * 2);
-			dest += dstride * 2, src += stride_0;
+			for (h2 = scanlines; h2 > 0 && h1 > 0; h2--, h1--) {
+				bgr555_to_rgb565(dest, vram + vram_ofs, w * 2);
+				vram_ofs = (vram_ofs + stride_0) & 0xfffff;
+				dest += dstride * 2;
+			}
 
-			bgr555_to_rgb565_b(dest, src, w * 2, l);
-			dest += dstride * 2, src += stride;
+			for (h2 = scanlines; h2 > 0 && h1 > 0; h2--, h1--) {
+				bgr555_to_rgb565_b(dest, vram + vram_ofs, w * 2, l);
+				vram_ofs = (vram_ofs + 2048) & 0xfffff;
+				dest += dstride * 2;
+			}
 		}
 	}
 #endif
 	else
 	{
-		src = (void *)((uintptr_t)src & ~3); // align for the blitter
+		for (; h1-- > 0; dest += dstride * 2) {
+			bgr555_to_rgb565(dest, vram + vram_ofs, w * 2);
+			vram_ofs = (vram_ofs + 2048) & 0xfffff;
+		}
 
-		for (; h1-- > 0; dest += dstride * 2, src += stride)
-		{
-			bgr555_to_rgb565(dest, src, w * 2);
+		hwrapped = (vram_ofs & 2047) + w * 2 - 2048;
+		if (hwrapped > 0) {
+			vram_ofs = (vram_ofs - h * 2048) & 0xff800;
+			dest -= dstride * 2 * h;
+			dest += w * 2 - hwrapped;
+			for (h1 = h; h1-- > 0; dest += dstride * 2) {
+				bgr555_to_rgb565(dest, vram + vram_ofs, hwrapped);
+				vram_ofs = (vram_ofs + 2048) & 0xfffff;
+			}
 		}
 	}
 
 out_hud:
-	print_hud(w * pl_vout_scale_w, h * pl_vout_scale_h, 0);
+	print_hud(xoffs, w * pl_vout_scale_w, (y + h) * pl_vout_scale_h);
 
 out:
 	pcnt_end(PCNT_BLIT);
@@ -469,7 +519,6 @@ static int dispmode_default(void)
 	return 1;
 }
 
-#ifdef BUILTIN_GPU_NEON
 static int dispmode_doubleres(void)
 {
 	if (!(pl_rearmed_cbs.gpu_caps & GPU_CAP_SUPPORTS_2X)
@@ -481,9 +530,8 @@ static int dispmode_doubleres(void)
 	snprintf(hud_msg, sizeof(hud_msg), "double resolution");
 	return 1;
 }
-#endif
 
-#ifdef __ARM_NEON__
+#ifdef HAVE_NEON32
 static int dispmode_scale2x(void)
 {
 	if (!resolution_ok(psx_w * 2, psx_h * 2) || psx_bpp != 16)
@@ -509,10 +557,8 @@ static int dispmode_eagle2x(void)
 
 static int (*dispmode_switchers[])(void) = {
 	dispmode_default,
-#ifdef BUILTIN_GPU_NEON
 	dispmode_doubleres,
-#endif
-#ifdef __ARM_NEON__
+#ifdef HAVE_NEON32
 	dispmode_scale2x,
 	dispmode_eagle2x,
 #endif
@@ -567,7 +613,7 @@ static void update_analog_nub_adjust(int *x_, int *y_)
 
 static void update_analogs(void)
 {
-	int *nubp[2] = { in_a1, in_a2 };
+	int *nubp[2] = { in_analog_left[0], in_analog_right[0] };
 	int vals[2];
 	int i, a, v, ret;
 
@@ -595,19 +641,31 @@ static void update_analogs(void)
 		}
 
 	}
-	//printf("%4d %4d %4d %4d\n", in_a1[0], in_a1[1], in_a2[0], in_a2[1]);
+}
+
+static void emu_set_action(enum sched_action action_)
+{
+	extern enum sched_action emu_action, emu_action_old;
+
+	if (action_ == SACTION_NONE)
+		emu_action_old = 0;
+	else if (action_ != emu_action_old)
+		psxRegs.stop++;
+	emu_action = action_;
 }
 
 static void update_input(void)
 {
 	int actions[IN_BINDTYPE_COUNT] = { 0, };
 	unsigned int emu_act;
+	int in_state_gun;
+	int i;
 
 	in_update(actions);
-	if (in_type1 == PSE_PAD_TYPE_ANALOGPAD)
+	if (in_type[0] == PSE_PAD_TYPE_ANALOGJOY || in_type[0] == PSE_PAD_TYPE_ANALOGPAD)
 		update_analogs();
 	emu_act = actions[IN_BINDTYPE_EMU];
-	in_state_gun = (emu_act & SACTION_GUN_MASK) >> SACTION_GUN_TRIGGER;
+	in_state_gun = emu_act & SACTION_GUN_MASK;
 
 	emu_act &= ~SACTION_GUN_MASK;
 	if (emu_act) {
@@ -618,19 +676,49 @@ static void update_input(void)
 	}
 	emu_set_action(emu_act);
 
-	in_keystate = actions[IN_BINDTYPE_PLAYER12];
+	in_keystate[0] = actions[IN_BINDTYPE_PLAYER12] & 0xffff;
+	in_keystate[1] = (actions[IN_BINDTYPE_PLAYER12] >> 16) & 0xffff;
+
+	if (tsdev) for (i = 0; i < 2; i++) {
+		int in = 0, x = 0, y = 0, trigger;;
+		if (in_type[i] != PSE_PAD_TYPE_GUN
+		    && in_type[i] != PSE_PAD_TYPE_GUNCON)
+			continue;
+		trigger = in_type[i] == PSE_PAD_TYPE_GUN
+			? (1 << DKEY_SQUARE) : (1 << DKEY_CIRCLE);
+
+		pl_gun_ts_update(tsdev, &x, &y, &in);
+		in_analog_left[i][0] = 65536;
+		in_analog_left[i][1] = 65536;
+		if (in && !(in_state_gun & (1 << SACTION_GUN_TRIGGER2))) {
+			in_analog_left[i][0] = x;
+			in_analog_left[i][1] = y;
+			if (!(g_opts & OPT_TSGUN_NOTRIGGER))
+				in_state_gun |= (1 << SACTION_GUN_TRIGGER);
+		}
+		in_keystate[i] = 0;
+		if (in_state_gun & ((1 << SACTION_GUN_TRIGGER)
+					| (1 << SACTION_GUN_TRIGGER2)))
+			in_keystate[i] |= trigger;
+		if (in_state_gun & (1 << SACTION_GUN_A))
+			in_keystate[i] |= (1 << DKEY_START);
+		if (in_state_gun & (1 << SACTION_GUN_B))
+			in_keystate[i] |= (1 << DKEY_CROSS);
+	}
 }
 #else /* MAEMO */
 extern void update_input(void);
 #endif
 
-void pl_update_gun(int *xn, int *yn, int *xres, int *yres, int *in)
+void pl_gun_byte2(int port, unsigned char byte)
 {
-	if (tsdev)
-		pl_gun_ts_update(tsdev, xn, yn, in);
+	if (!tsdev || in_type[port] != PSE_PAD_TYPE_GUN || !(byte & 0x10))
+		return;
+	if (in_analog_left[port][0] == 65536)
+		return;
 
-	*xres = psx_w;
-	*yres = psx_h;
+	psxScheduleIrq10(4, in_analog_left[port][0] * 1629 / 1024,
+		in_analog_left[port][1] * psx_h / 1024);
 }
 
 #define MAX_LAG_FRAMES 3
@@ -720,14 +808,14 @@ void pl_frame_limit(void)
 
 		// recompilation is not that fast and may cause frame skip on
 		// loading screens and such, resulting in flicker or glitches
-		if (new_dynarec_did_compile) {
+		if (ndrc_g.did_compile) {
 			if (drc_active_vsyncs < 32)
 				pl_rearmed_cbs.fskip_advice = 0;
 			drc_active_vsyncs++;
 		}
 		else
 			drc_active_vsyncs = 0;
-		new_dynarec_did_compile = 0;
+		ndrc_g.did_compile = 0;
 	}
 
 	pcnt_start(PCNT_ALL);
@@ -735,18 +823,20 @@ void pl_frame_limit(void)
 
 void pl_timing_prepare(int is_pal_)
 {
+	double fps;
 	pl_rearmed_cbs.fskip_advice = 0;
 	pl_rearmed_cbs.flips_per_sec = 0;
 	pl_rearmed_cbs.cpu_usage = 0;
 
 	is_pal = is_pal_;
-	frame_interval = is_pal ? 20000 : 16667;
-	frame_interval1024 = is_pal ? 20000*1024 : 17066667;
+	fps = psxGetFps();
+	frame_interval = (int)(1000000.0 / fps);
+	frame_interval1024 = (int)(1000000.0 * 1024.0 / fps);
 
 	// used by P.E.Op.S. frameskip code
-	pl_rearmed_cbs.gpu_peops.fFrameRateHz = is_pal ? 50.0f : 59.94f;
+	pl_rearmed_cbs.gpu_peops.fFrameRateHz = (float)fps;
 	pl_rearmed_cbs.gpu_peops.dwFrameRateTicks =
-		(100000*100 / (unsigned long)(pl_rearmed_cbs.gpu_peops.fFrameRateHz*100));
+		(100000*100 / (int)(pl_rearmed_cbs.gpu_peops.fFrameRateHz*100));
 }
 
 static void pl_get_layer_pos(int *x, int *y, int *w, int *h)
@@ -770,6 +860,7 @@ struct rearmed_cbs pl_rearmed_cbs = {
 	.mmap = pl_mmap,
 	.munmap = pl_munmap,
 	.pl_set_gpu_caps = pl_set_gpu_caps,
+	.gpu_state_change = gpu_state_change,
 };
 
 /* watchdog */
@@ -779,15 +870,11 @@ static void *watchdog_thread(void *unused)
 	int seen_dead = 0;
 	int sleep_time = 5;
 
-#if !defined(NDEBUG) || defined(DRC_DBG)
-	// don't interfere with debug
-	return NULL;
-#endif
 	while (1)
 	{
 		sleep(sleep_time);
 
-		if (stop) {
+		if (psxRegs.stop) {
 			seen_dead = 0;
 			sleep_time = 5;
 			continue;
@@ -805,6 +892,7 @@ static void *watchdog_thread(void *unused)
 			fprintf(stderr, "watchdog: seen_dead %d\n", seen_dead);
 		if (seen_dead > 4) {
 			fprintf(stderr, "watchdog: lockup detected, aborting\n");
+			fflush(stderr);
 			// we can't do any cleanup here really, the main thread is
 			// likely touching resources and would crash anyway
 			abort();
@@ -814,9 +902,25 @@ static void *watchdog_thread(void *unused)
 
 void pl_start_watchdog(void)
 {
+#if defined(NDEBUG) && !defined(DRC_DBG)
 	pthread_attr_t attr;
 	pthread_t tid;
 	int ret;
+#ifdef __linux__
+	int tpid = 0;
+	char buf[256];
+	FILE *f = fopen("/proc/self/status", "r");
+	if (f) {
+		while (fgets(buf, sizeof(buf), f))
+			if (buf[0] == 'T' && sscanf(buf, "TracerPid: %d", &tpid) == 1)
+				break;
+		fclose(f);
+	}
+	if (tpid) {
+		printf("no watchdog to tracer %d\n", tpid);
+		return;
+	}
+#endif
 	
 	pthread_attr_init(&attr);
 	pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
@@ -824,12 +928,15 @@ void pl_start_watchdog(void)
 	ret = pthread_create(&tid, &attr, watchdog_thread, NULL);
 	if (ret != 0)
 		fprintf(stderr, "could not start watchdog: %d\n", ret);
+#endif
+	(void)watchdog_thread;
 }
 
-static void *pl_emu_mmap(unsigned long addr, size_t size, int is_fixed,
-	enum psxMapTag tag)
+static void *pl_emu_mmap(unsigned long addr, size_t size,
+	enum psxMapTag tag, int *can_retry_addr)
 {
-	return plat_mmap(addr, size, 0, is_fixed);
+	*can_retry_addr = 1;
+	return plat_mmap(addr, size, 0, 0);
 }
 
 static void pl_emu_munmap(void *ptr, size_t size, enum psxMapTag tag)
@@ -839,7 +946,8 @@ static void pl_emu_munmap(void *ptr, size_t size, enum psxMapTag tag)
 
 static void *pl_mmap(unsigned int size)
 {
-	return psxMapHook(0, size, 0, MAP_TAG_VRAM);
+	int can_retry_addr;
+	return psxMapHook(0, size, MAP_TAG_VRAM, &can_retry_addr);
 }
 
 static void pl_munmap(void *ptr, unsigned int size)

@@ -8,7 +8,9 @@
  * See the COPYING file in the top-level directory.
  */
 
+#include <stdint.h>
 #include "cspace.h"
+#include "compiler_features.h"
 
 /*
  * note: these are intended for testing and should be avoided
@@ -30,7 +32,6 @@
         || (defined(__GNUC__) && __GNUC__ >= 5)) \
        && __BYTE_ORDER__ != __ORDER_BIG_ENDIAN__
 
-#include <stdint.h>
 #include <assert.h>
 
 #if defined(__ARM_NEON) || defined(__ARM_NEON__)
@@ -93,7 +94,8 @@ void bgr555_to_rgb565(void * __restrict__ dst_, const void *  __restrict__ src_,
 
 void bgr555_to_rgb565(void *dst_, const void *src_, int bytes)
 {
-	const unsigned int *src = src_;
+	// source can be misaligned, but it's very rare, so just force
+	const unsigned int *src = (const void *)((intptr_t)src_ & ~3);
 	unsigned int *dst = dst_;
 	unsigned int x, p, r, g, b;
 
@@ -112,7 +114,7 @@ void bgr555_to_rgb565(void *dst_, const void *src_, int bytes)
 
 #ifndef HAVE_bgr888_to_x
 
-void bgr888_to_rgb565(void *dst_, const void *src_, int bytes)
+void attr_weak bgr888_to_rgb565(void *dst_, const void *src_, int bytes)
 {
 	const unsigned char *src = src_;
 	unsigned int *dst = dst_;
@@ -139,7 +141,29 @@ void bgr888_to_rgb565(void *dst_, const void *src_, int bytes)
 void rgb888_to_rgb565(void *dst, const void *src, int bytes) {}
 void bgr888_to_rgb888(void *dst, const void *src, int bytes) {}
 
-#endif // __ARM_NEON__
+#endif // HAVE_bgr888_to_x
+
+void bgr555_to_xrgb8888(void * __restrict__ dst_, const void * __restrict__ src_, int bytes)
+{
+	const uint16_t * __restrict__ src = src_;
+	uint32_t * __restrict__ dst = dst_;
+
+	for (; bytes >= 2; bytes -= 2, src++, dst++)
+	{
+		uint32_t t = ((*src << 19) | (*src >> 7)) & 0xf800f8;
+		t |= (*src << 6) & 0xf800;
+		*dst = t | ((t >> 5) & 0x070707);
+	}
+}
+
+void bgr888_to_xrgb8888(void * __restrict__ dst_, const void * __restrict__ src_, int bytes)
+{
+	const uint8_t * __restrict__ src = src_;
+	uint32_t * __restrict__ dst = dst_;
+
+	for (; bytes >= 3; bytes -= 3, src += 3, dst++)
+		*dst = (src[0] << 16) | (src[1] << 8) | src[2];
+}
 
 /* YUV stuff */
 static int yuv_ry[32], yuv_gy[32], yuv_by[32];
@@ -214,7 +238,7 @@ void bgr555_to_uyvy(void *d, const void *s, int pixels)
   int r0, g0, b0, r1, g1, b1;
   int y0, y1, u, v;
 
-  for (; pixels > 0; src += 2, dst++, pixels -= 2)
+  for (; pixels > 1; src += 2, dst++, pixels -= 2)
   {
     b0 = (src[0] >> 10) & 0x1f;
     g0 = (src[0] >> 5) & 0x1f;

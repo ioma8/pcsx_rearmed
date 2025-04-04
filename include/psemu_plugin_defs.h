@@ -141,7 +141,7 @@ typedef struct
   long	PADquery(void);
 
   unsigned char PADstartPoll(int);
-  unsigned char PADpoll(unsigned char);
+  unsigned char PADpoll(unsigned char, int *);
 
 */
 
@@ -157,6 +157,8 @@ typedef struct
 
 
 
+// No controller
+#define PSE_PAD_TYPE_NONE			0
 // MOUSE SCPH-1030
 #define PSE_PAD_TYPE_MOUSE			1
 // NEGCON - 16 button analog controller SLPH-00001
@@ -193,10 +195,16 @@ typedef struct
 #define PSE_PAD_WARN				80
 
 
-typedef struct
+typedef struct PadDataS
 {
-	// controler type - fill it withe predefined values above
+	// controller type - fill it withe predefined values above
 	unsigned char controllerType;
+
+	unsigned char padding;
+	unsigned short saveSize;
+
+	int portMultitap;
+	int requestPadIndex;
 
 	// status of buttons - every controller fills this field
 	unsigned short buttonStatus;
@@ -209,11 +217,28 @@ typedef struct
 	// values are in range -128 - 127
 	unsigned char moveX, moveY;
 
+	// Lightgun values
+	int absoluteX, absoluteY;
+
 	unsigned char Vib[2];
 	unsigned char VibF[2];
+	
+	struct {
+		unsigned char configMode;
+		unsigned char padMode; // 0 : digital 1: analog
+		unsigned char cmd4dConfig[6];
+		unsigned int  lastUseFrame;
+		unsigned int  unused;
+		unsigned char configModeUsed;
+		unsigned char autoAnalogTried;
+		unsigned char userToggled;
+		unsigned char padding;
+	} ds;
+	unsigned char multitapLongModeEnabled;
+	unsigned char padding2;
+	unsigned char txData[34];
 
-	unsigned char reserved[87];
-
+	unsigned char reserved[22];
 } PadDataS;
 
 /*         NET PlugIn v2       */

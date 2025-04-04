@@ -21,6 +21,7 @@
 
 #include "psxcommon.h"
 #include "ppf.h"
+#include "misc.h"
 #include "cdrom.h"
 
 typedef struct tagPPF_DATA {
@@ -58,6 +59,7 @@ static void FillPPFCache() {
 	if (iPPFNum <= 0) return;
 
 	pc = ppfCache = (PPF_CACHE *)malloc(iPPFNum * sizeof(PPF_CACHE));
+	if (pc == NULL) return;
 
 	iPPFNum--;
 	p = ppfHead;
@@ -92,7 +94,7 @@ void FreePPFCache() {
 
 void CheckPPFCache(unsigned char *pB, unsigned char m, unsigned char s, unsigned char f) {
 	PPF_CACHE *pcstart, *pcend, *pcpos;
-	int addr = MSF2SECT(btoi(m), btoi(s), btoi(f)), pos, anz, start;
+	int addr = MSF2SECT(m, s, f), pos, anz, start;
 
 	if (ppfCache == NULL) return;
 
@@ -133,6 +135,7 @@ void CheckPPFCache(unsigned char *pB, unsigned char m, unsigned char s, unsigned
 static void AddToPPF(s32 ladr, s32 pos, s32 anz, unsigned char *ppfmem) {
 	if (ppfHead == NULL) {
 		ppfHead = (PPF_DATA *)malloc(sizeof(PPF_DATA) + anz);
+		if (ppfHead == NULL) return;
 		ppfHead->addr = ladr;
 		ppfHead->pNext = NULL;
 		ppfHead->pos = pos;
@@ -164,6 +167,7 @@ static void AddToPPF(s32 ladr, s32 pos, s32 anz, unsigned char *ppfmem) {
 		}
 
 		padd = (PPF_DATA *)malloc(sizeof(PPF_DATA) + anz);
+		if (padd == NULL) return;
 		padd->addr = ladr;
 		padd->pNext = p;
 		padd->pos = pos;
@@ -177,13 +181,13 @@ static void AddToPPF(s32 ladr, s32 pos, s32 anz, unsigned char *ppfmem) {
 	}
 }
 
-void BuildPPFCache() {
+void BuildPPFCache(const char *fname) {
 	FILE			*ppffile;
 	char			buffer[12];
 	char			method, undo = 0, blockcheck = 0;
 	int				dizlen, dizyn;
 	unsigned char	ppfmem[512];
-	char			szPPF[MAXPATHLEN];
+	char			szPPF[MAXPATHLEN * 2];
 	int				count, seekpos, pos;
 	u32				anz; // use 32-bit to avoid stupid overflows
 	s32				ladr, off, anx;
@@ -192,30 +196,33 @@ void BuildPPFCache() {
 
 	if (CdromId[0] == '\0') return;
 
-	// Generate filename in the format of SLUS_123.45
-	buffer[0] = toupper(CdromId[0]);
-	buffer[1] = toupper(CdromId[1]);
-	buffer[2] = toupper(CdromId[2]);
-	buffer[3] = toupper(CdromId[3]);
-	buffer[4] = '_';
-	buffer[5] = CdromId[4];
-	buffer[6] = CdromId[5];
-	buffer[7] = CdromId[6];
-	buffer[8] = '.';
-	buffer[9] = CdromId[7];
-	buffer[10] = CdromId[8];
-	buffer[11] = '\0';
+	if (!fname) {
+		// Generate filename in the format of SLUS_123.45
+		buffer[0] = toupper(CdromId[0]);
+		buffer[1] = toupper(CdromId[1]);
+		buffer[2] = toupper(CdromId[2]);
+		buffer[3] = toupper(CdromId[3]);
+		buffer[4] = '_';
+		buffer[5] = CdromId[4];
+		buffer[6] = CdromId[5];
+		buffer[7] = CdromId[6];
+		buffer[8] = '.';
+		buffer[9] = CdromId[7];
+		buffer[10] = CdromId[8];
+		buffer[11] = '\0';
 
-	sprintf(szPPF, "%s%s", Config.PatchesDir, buffer);
-
-	ppffile = fopen(szPPF, "rb");
+		sprintf(szPPF, "%s%s", Config.PatchesDir, buffer);
+		fname = szPPF;
+	}
+	ppffile = fopen(fname, "rb");
 	if (ppffile == NULL) return;
 
 	memset(buffer, 0, 5);
-	fread(buffer, 3, 1, ppffile);
+	if (fread(buffer, 1, 3, ppffile) != 3)
+		goto fail_io;
 
 	if (strcmp(buffer, "PPF") != 0) {
-		SysPrintf(_("Invalid PPF patch: %s.\n"), szPPF);
+		SysPrintf(_("Invalid PPF patch: %s.\n"), fname);
 		fclose(ppffile);
 		return;
 	}
@@ -235,12 +242,14 @@ void BuildPPFCache() {
 			fseek(ppffile, -8, SEEK_END);
 
 			memset(buffer, 0, 5);
-			fread(buffer, 4, 1, ppffile);
+			if (fread(buffer, 1, 4, ppffile) != 4)
+				goto fail_io;
 
 			if (strcmp(".DIZ", buffer) != 0) {
 				dizyn = 0;
 			} else {
-				fread(&dizlen, 4, 1, ppffile);
+				if (fread(&dizlen, 1, 4, ppffile) != 4)
+					goto fail_io;
 				dizlen = SWAP32(dizlen);
 				dizyn = 1;
 			}
@@ -266,12 +275,15 @@ void BuildPPFCache() {
 
 			fseek(ppffile, -6, SEEK_END);
 			memset(buffer, 0, 5);
-			fread(buffer, 4, 1, ppffile);
+			if (fread(buffer, 1, 4, ppffile) != 4)
+				goto fail_io;
 			dizlen = 0;
 
 			if (strcmp(".DIZ", buffer) == 0) {
 				fseek(ppffile, -2, SEEK_END);
-				fread(&dizlen, 2, 1, ppffile);
+				// TODO: Endian/size unsafe?
+				if (fread(&dizlen, 1, 2, ppffile) != 2)
+					goto fail_io;
 				dizlen = SWAP32(dizlen);
 				dizlen += 36;
 			}
@@ -298,13 +310,19 @@ void BuildPPFCache() {
 	// now do the data reading
 	do {                                                
 		fseek(ppffile, seekpos, SEEK_SET);
-		fread(&pos, 4, 1, ppffile);
+		if (fread(&pos, 1, sizeof(pos), ppffile) != sizeof(pos))
+			goto fail_io;
 		pos = SWAP32(pos);
 
-		if (method == 2) fread(buffer, 4, 1, ppffile); // skip 4 bytes on ppf3 (no int64 support here)
+		if (method == 2) {
+			// skip 4 bytes on ppf3 (no int64 support here)
+			if (fread(buffer, 1, 4, ppffile) != 4)
+				goto fail_io;
+		}
 
 		anz = fgetc(ppffile);
-		fread(ppfmem, anz, 1, ppffile);   
+		if (fread(ppfmem, 1, anz, ppffile) != anz)
+			goto fail_io;
 
 		ladr = pos / CD_FRAMESIZE_RAW;
 		off = pos % CD_FRAMESIZE_RAW;
@@ -330,13 +348,23 @@ void BuildPPFCache() {
 
 	FillPPFCache(); // build address array
 
-	SysPrintf(_("Loaded PPF %d.0 patch: %s.\n"), method + 1, szPPF);
+	SysPrintf(_("Loaded PPF %d.0 patch: %s.\n"), method + 1, fname);
+	return;
+
+fail_io:
+#ifndef NDEBUG
+	SysPrintf(_("File IO error in <%s:%s>.\n"), __FILE__, __func__);
+#endif
+	fclose(ppffile);
 }
 
 // redump.org SBI files, slightly different handling from PCSX-Reloaded
 unsigned char *sbi_sectors;
+int sbi_len;
 
 int LoadSBI(const char *fname, int sector_count) {
+	int good_sectors = 0;
+	int clean_eof = 0;
 	char buffer[16];
 	FILE *sbihandle;
 	u8 sbitime[3], t;
@@ -346,19 +374,35 @@ int LoadSBI(const char *fname, int sector_count) {
 	if (sbihandle == NULL)
 		return -1;
 
-	sbi_sectors = calloc(1, sector_count / 8);
-	if (sbi_sectors == NULL) {
-		fclose(sbihandle);
-		return -1;
-	}
+	sbi_len = (sector_count + 7) / 8;
+	sbi_sectors = calloc(1, sbi_len);
+	if (sbi_sectors == NULL)
+		goto end;
 
 	// 4-byte SBI header
-	fread(buffer, 1, 4, sbihandle);
+	if (fread(buffer, 1, 4, sbihandle) != 4)
+		goto end;
+
 	while (1) {
 		s = fread(sbitime, 1, 3, sbihandle);
 		if (s != 3)
+		{
+			if (s == 0)
+				clean_eof = 1;
 			break;
-		fread(&t, 1, 1, sbihandle);
+		}
+		s = MSF2SECT(btoi(sbitime[0]), btoi(sbitime[1]), btoi(sbitime[2]));
+		if (s < sector_count) {
+			sbi_sectors[s >> 3] |= 1 << (s&7);
+			good_sectors++;
+		}
+		else
+			SysPrintf(_("SBI sector %d >= %d?\n"), s, sector_count);
+
+		// skip to the next record
+		if (fread(&t, 1, sizeof(t), sbihandle) != sizeof(t))
+			break;
+		s = -1;
 		switch (t) {
 		default:
 		case 1:
@@ -369,23 +413,28 @@ int LoadSBI(const char *fname, int sector_count) {
 			s = 3;
 			break;
 		}
-		fseek(sbihandle, s, SEEK_CUR);
-
-		s = MSF2SECT(btoi(sbitime[0]), btoi(sbitime[1]), btoi(sbitime[2]));
-		if (s < sector_count)
-			sbi_sectors[s >> 3] |= 1 << (s&7);
-		else
-			SysPrintf(_("SBI sector %d >= %d?\n"), s, sector_count);
+		if (s < 0)
+			break;
+		if (fseek(sbihandle, s, SEEK_CUR))
+			break;
 	}
 
+end:
+	if (!clean_eof)
+		SysPrintf(_("SBI: parse failure at 0x%lx\n"), ftell(sbihandle));
+	if (!good_sectors) {
+		free(sbi_sectors);
+		sbi_sectors = NULL;
+		sbi_len = 0;
+	}
 	fclose(sbihandle);
-
-	return 0;
+	return sbi_sectors ? 0 : -1;
 }
 
 void UnloadSBI(void) {
 	if (sbi_sectors) {
 		free(sbi_sectors);
 		sbi_sectors = NULL;
+		sbi_len = 0;
 	}
 }

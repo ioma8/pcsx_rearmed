@@ -15,6 +15,9 @@
  *                                                                         *
  ***************************************************************************/
 
+#ifndef __P_SOUND_EXTERNALS_H__
+#define __P_SOUND_EXTERNALS_H__
+
 #include <stdint.h>
 
 /////////////////////////////////////////////////////////
@@ -55,7 +58,7 @@
 #define MAXCHAN     24
 
 // note: must be even due to the way reverb works now
-#define NSSIZE ((44100 / 50 + 16) & ~1)
+#define NSSIZE ((44100 / 50 + 32) & ~1)
 
 ///////////////////////////////////////////////////////////
 // struct defines
@@ -86,17 +89,6 @@ typedef struct
               
 ///////////////////////////////////////////////////////////
 
-// Tmp Flags
-
-// used for debug channel muting
-#define FLAG_MUTE  1
-
-// used for simple interpolation
-#define FLAG_IPOL0 2
-#define FLAG_IPOL1 4
-
-///////////////////////////////////////////////////////////
-
 // MAIN CHANNEL STRUCT
 typedef struct
 {
@@ -114,8 +106,14 @@ typedef struct
  unsigned int      bFMod:2;                            // freq mod (0=off, 1=sound channel, 2=freq channel)
  unsigned int      prevflags:3;                        // flags from previous block
  unsigned int      bIgnoreLoop:1;                      // Ignore loop
- int               iLeftVolume;                        // left volume
- int               iRightVolume;                       // right volume
+ unsigned int      bStarting:1;                        // starting after keyon
+ union {
+  struct {
+   int             iLeftVolume;                        // left volume
+   int             iRightVolume;                       // right volume
+  };
+  int              iVolume[2];
+ };
  ADSRInfoEx        ADSRX;
  int               iRawPitch;                          // raw pitch (0...3fff)
 } SPUCHAN;
@@ -130,50 +128,66 @@ typedef struct
  int VolLeft;
  int VolRight;
 
- int FB_SRC_A;       // (offset)
- int FB_SRC_B;       // (offset)
- int IIR_ALPHA;      // (coef.)
- int ACC_COEF_A;     // (coef.)
- int ACC_COEF_B;     // (coef.)
- int ACC_COEF_C;     // (coef.)
- int ACC_COEF_D;     // (coef.)
- int IIR_COEF;       // (coef.)
- int FB_ALPHA;       // (coef.)
- int FB_X;           // (coef.)
- int IIR_DEST_A0;    // (offset)
- int IIR_DEST_A1;    // (offset)
- int ACC_SRC_A0;     // (offset)
- int ACC_SRC_A1;     // (offset)
- int ACC_SRC_B0;     // (offset)
- int ACC_SRC_B1;     // (offset)
- int IIR_SRC_A0;     // (offset)
- int IIR_SRC_A1;     // (offset)
- int IIR_DEST_B0;    // (offset)
- int IIR_DEST_B1;    // (offset)
- int ACC_SRC_C0;     // (offset)
- int ACC_SRC_C1;     // (offset)
- int ACC_SRC_D0;     // (offset)
- int ACC_SRC_D1;     // (offset)
- int IIR_SRC_B1;     // (offset)
- int IIR_SRC_B0;     // (offset)
- int MIX_DEST_A0;    // (offset)
- int MIX_DEST_A1;    // (offset)
- int MIX_DEST_B0;    // (offset)
- int MIX_DEST_B1;    // (offset)
- int IN_COEF_L;      // (coef.)
- int IN_COEF_R;      // (coef.)
+ // directly from nocash docs
+ //int dAPF1; // 1DC0 disp    Reverb APF Offset 1
+ //int dAPF2; // 1DC2 disp    Reverb APF Offset 2
+ int vIIR;    // 1DC4 volume  Reverb Reflection Volume 1
+ int vCOMB1;  // 1DC6 volume  Reverb Comb Volume 1
+ int vCOMB2;  // 1DC8 volume  Reverb Comb Volume 2
+ int vCOMB3;  // 1DCA volume  Reverb Comb Volume 3
+ int vCOMB4;  // 1DCC volume  Reverb Comb Volume 4
+ int vWALL;   // 1DCE volume  Reverb Reflection Volume 2
+ int vAPF1;   // 1DD0 volume  Reverb APF Volume 1
+ int vAPF2;   // 1DD2 volume  Reverb APF Volume 2
+ int mLSAME;  // 1DD4 src/dst Reverb Same Side Reflection Address 1 Left
+ int mRSAME;  // 1DD6 src/dst Reverb Same Side Reflection Address 1 Right
+ int mLCOMB1; // 1DD8 src     Reverb Comb Address 1 Left
+ int mRCOMB1; // 1DDA src     Reverb Comb Address 1 Right
+ int mLCOMB2; // 1DDC src     Reverb Comb Address 2 Left
+ int mRCOMB2; // 1DDE src     Reverb Comb Address 2 Right
+ int dLSAME;  // 1DE0 src     Reverb Same Side Reflection Address 2 Left
+ int dRSAME;  // 1DE2 src     Reverb Same Side Reflection Address 2 Right
+ int mLDIFF;  // 1DE4 src/dst Reverb Different Side Reflect Address 1 Left
+ int mRDIFF;  // 1DE6 src/dst Reverb Different Side Reflect Address 1 Right
+ int mLCOMB3; // 1DE8 src     Reverb Comb Address 3 Left
+ int mRCOMB3; // 1DEA src     Reverb Comb Address 3 Right
+ int mLCOMB4; // 1DEC src     Reverb Comb Address 4 Left
+ int mRCOMB4; // 1DEE src     Reverb Comb Address 4 Right
+ int dLDIFF;  // 1DF0 src     Reverb Different Side Reflect Address 2 Left
+ int dRDIFF;  // 1DF2 src     Reverb Different Side Reflect Address 2 Right
+ int mLAPF1;  // 1DF4 src/dst Reverb APF Address 1 Left
+ int mRAPF1;  // 1DF6 src/dst Reverb APF Address 1 Right
+ int mLAPF2;  // 1DF8 src/dst Reverb APF Address 2 Left
+ int mRAPF2;  // 1DFA src/dst Reverb APF Address 2 Right
+ int vLIN;    // 1DFC volume  Reverb Input Volume Left
+ int vRIN;    // 1DFE volume  Reverb Input Volume Right
 
- int dirty;          // registers changed
+ // subtracted offsets
+ int mLAPF1_dAPF1, mRAPF1_dAPF1, mLAPF2_dAPF2, mRAPF2_dAPF2;
 
- // MIX_DEST_xx - FB_SRC_x
- int FB_SRC_A0, FB_SRC_A1, FB_SRC_B0, FB_SRC_B1;
+ int dirty;   // registers changed
 } REVERBInfo;
 
 ///////////////////////////////////////////////////////////
 
 // psx buffers / addresses
 
-#define SB_SIZE (32 + 4)
+typedef union
+{
+ int SB[28 + 4 + 4];
+ int SB_rvb[2][4*2]; // for reverb filtering
+ struct {
+  int sample[28];
+  union {
+   struct {
+    int pos;
+    int val[4];
+   } gauss;
+   int simple[5]; // 28-32
+  } interp;
+  int sinc_old;
+ };
+} sample_buf;
 
 typedef struct
 {
@@ -181,13 +195,9 @@ typedef struct
  unsigned short  spuStat;
 
  unsigned int    spuAddr;
- union {
-  unsigned char  *spuMemC;
-  unsigned short *spuMem;
- };
- unsigned char * pSpuIrq;
 
  unsigned int    cycles_played;
+ unsigned int    cycles_dma_end;
  int             decode_pos;
  int             decode_dirty_ch;
  unsigned int    bSpuInit:1;
@@ -200,14 +210,38 @@ typedef struct
  unsigned int    dwChannelsAudible;    // not silent channels
  unsigned int    dwChannelDead;        // silent+not useful channels
 
+ unsigned int    XARepeat;
+ unsigned int    XALastVal;
+
+ int             iLeftXAVol;
+ int             iRightXAVol;
+
+ int             cdClearSamples;       // extra samples to clear the capture buffers
+ struct {                              // channel volume in the cd controller
+  unsigned char  ll, lr, rl, rr;       // see cdr.Attenuator* in cdrom.c
+ } cdv;                                // applied on spu side for easier emulation
+
+ unsigned int    last_keyon_cycles;
+
+ union {
+  unsigned char  *spuMemC;
+  unsigned short *spuMem;
+ };
+ unsigned char * pSpuIrq;
+
  unsigned char * pSpuBuffer;
  short         * pS;
 
- void (CALLBACK *irqCallback)(void);   // func of main emu, called on spu irq
- void (CALLBACK *cddavCallback)(short, short);
+ SPUCHAN       * s_chan;
+ REVERBInfo    * rvb;
+
+ int           * SSumLR;
+
+ void (CALLBACK *irqCallback)(int);
+ //void (CALLBACK *cddavCallback)(short, short);
  void (CALLBACK *scheduleCallback)(unsigned int);
 
- xa_decode_t   * xapGlobal;
+ const xa_decode_t * xapGlobal;
  unsigned int  * XAFeed;
  unsigned int  * XAPlay;
  unsigned int  * XAStart;
@@ -218,27 +252,23 @@ typedef struct
  unsigned int  * CDDAStart;
  unsigned int  * CDDAEnd;
 
- unsigned int    XARepeat;
- unsigned int    XALastVal;
-
- int             iLeftXAVol;
- int             iRightXAVol;
-
- SPUCHAN       * s_chan;
- REVERBInfo    * rvb;
-
- // buffers
- int           * SB;
- int           * SSumLR;
-
- int             pad[29];
  unsigned short  regArea[0x400];
+
+ sample_buf      sb[MAXCHAN+1]; // last entry is used for reverb filter
+ int             interpolation;
+
+#if P_HAVE_PTHREAD || defined(WANT_THREAD_CODE)
+ sample_buf    * sb_thread;
+ sample_buf      sb_thread_[MAXCHAN+1];
+#endif
 } SPUInfo;
 
+#define regAreaRef(offset) \
+  spu.regArea[((offset) - 0xc00) >> 1]
 #define regAreaGet(offset) \
-  spu.regArea[((offset) - 0xc00)>>1]
+  regAreaRef(offset)
 #define regAreaGetCh(ch, offset) \
-  spu.regArea[((ch<<4)|(offset))>>1]
+  spu.regArea[(((ch) << 4) | (offset)) >> 1]
 
 ///////////////////////////////////////////////////////////
 // SPU.C globals
@@ -248,14 +278,20 @@ typedef struct
 
 extern SPUInfo spu;
 
-void do_samples(unsigned int cycles_to, int do_sync);
+void do_samples(unsigned int cycles_to, int force_no_thread);
 void schedule_next_irq(void);
+void check_irq_io(unsigned int addr);
+void do_irq_io(int cycles_after);
 
-#define do_samples_if_needed(c, sync) \
+#define do_samples_if_needed(c, no_thread, samples) \
  do { \
-  if (sync || (int)((c) - spu.cycles_played) >= 16 * 768) \
-   do_samples(c, sync); \
+  if ((no_thread) || (int)((c) - spu.cycles_played) >= (samples) * 768) \
+   do_samples(c, no_thread); \
  } while (0)
 
 #endif
 
+void FeedXA(const xa_decode_t *xap);
+void FeedCDDA(unsigned char *pcm, int nBytes);
+
+#endif /* __P_SOUND_EXTERNALS_H__ */

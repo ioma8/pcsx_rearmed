@@ -19,6 +19,8 @@
 #include "psxcommon.h"
 #include "r3000a.h"
 #include "psxmem.h"
+#include "misc.h"
+#include "../frontend/plugin_lib.h" // in_keystate for D4
 
 #include "cheat.h"
 
@@ -227,6 +229,10 @@ void ApplyCheats() {
 					psxMu16ref(addr) = SWAPu16(val);
 					break;
 
+				case CHEAT_SCRATCHPAD16: // 1F
+					psxHs16ref(addr) = SWAPu16(val);
+					break;
+
 				case CHEAT_INC16:
 					psxMu16ref(addr) = SWAPu16(psxMu16(addr) + val);
 					break;
@@ -318,6 +324,20 @@ void ApplyCheats() {
 					if (PSXMu16(addr) <= val)
 						j++; // skip the next code
 					break;
+
+				case CHEAT_BUTTONS1_16: { // D4
+					u16 keys = in_keystate[0];
+					keys = (keys << 8) | (keys >> 8);
+					if (keys != val)
+						j++; // skip the next code
+					break;
+				}
+
+				default:
+					SysPrintf("unhandled cheat %d,%d code %08X\n",
+						i, j, CheatCodes[j].Addr);
+					Cheats[i].WasEnabled = Cheats[i].Enabled = 0;
+					break;
 			}
 		}
 	}
@@ -340,7 +360,6 @@ int AddCheat(const char *descr, char *code) {
 		}
 	}
 
-	Cheats[NumCheats].Descr = strdup(descr[0] ? descr : _("(Untitled)"));
 	Cheats[NumCheats].Enabled = 0;
 	Cheats[NumCheats].WasEnabled = 0;
 	Cheats[NumCheats].First = NumCodes;
@@ -350,7 +369,7 @@ int AddCheat(const char *descr, char *code) {
 	p2 = code;
 
 	while (c) {
-		unsigned int t1, t2;
+		unsigned int t1, t2, r;
 
 		while (*p2 != '\n' && *p2 != '\0')
 			p2++;
@@ -363,9 +382,11 @@ int AddCheat(const char *descr, char *code) {
 
 		t1 = 0;
 		t2 = 0;
-		sscanf(p1, "%x %x", &t1, &t2);
+		r = sscanf(p1, "%x %x", &t1, &t2);
 
-		if (t1 > 0x10000000) {
+		if (r != 2)
+			SysPrintf("cheat %d: couldn't parse '%s'\n", NumCodes, p1);
+		else if (t1 >= 0x10000000) {
 			if (NumCodes >= NumCodesAllocated) {
 				NumCodesAllocated += ALLOC_INCREMENT;
 
@@ -392,6 +413,7 @@ int AddCheat(const char *descr, char *code) {
 		return -1;
 	}
 
+	Cheats[NumCheats].Descr = strdup(descr[0] ? descr : _("(Untitled)"));
 	NumCheats++;
 	return 0;
 }
@@ -400,6 +422,7 @@ void RemoveCheat(int index) {
 	assert(index >= 0 && index < NumCheats);
 
 	free(Cheats[index].Descr);
+	Cheats[index].Descr = NULL;
 
 	while (index < NumCheats - 1) {
 		Cheats[index] = Cheats[index + 1];

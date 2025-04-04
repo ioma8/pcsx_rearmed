@@ -18,157 +18,95 @@
 *   51 Franklin Street, Fifth Floor, Boston, MA 02111-1307 USA.           *
 ***************************************************************************/
 
+#ifndef __GPU_UNAI_GPU_RASTER_SPRITE_H__
+#define __GPU_UNAI_GPU_RASTER_SPRITE_H__
+
 ///////////////////////////////////////////////////////////////////////////////
 //  GPU internal sprite drawing functions
 
-///////////////////////////////////////////////////////////////////////////////
-void gpuDrawS(const PS gpuSpriteSpanDriver)
+void gpuDrawS(PtrUnion packet, const PS gpuSpriteDriver, s32 *w_out, s32 *h_out)
 {
-	s32 x0, x1;
-	s32 y0, y1;
-	s32 u0;
-	s32 v0;
+	s32 x0, x1, y0, y1;
+	u32 u0, v0;
 
-	x1 = x0 = GPU_EXPANDSIGN(PacketBuffer.S2[2]) + DrawingOffset[0];
-	y1 = y0 = GPU_EXPANDSIGN(PacketBuffer.S2[3]) + DrawingOffset[1];
-	x1+= PacketBuffer.S2[6];
-	y1+= PacketBuffer.S2[7];
+	//NOTE: Must 11-bit sign-extend the whole sum here, not just packet X/Y,
+	// or sprites in 1st level of SkullMonkeys disappear when walking right.
+	// This now matches behavior of Mednafen and PCSX Rearmed's gpu_neon:
+	x0 = GPU_EXPANDSIGN(le16_to_s16(packet.U2[2]) + gpu_unai.DrawingOffset[0]);
+	y0 = GPU_EXPANDSIGN(le16_to_s16(packet.U2[3]) + gpu_unai.DrawingOffset[1]);
 
-	{
-		s32 xmin, xmax;
-		s32 ymin, ymax;
-		xmin = DrawingArea[0];	xmax = DrawingArea[2];
-		ymin = DrawingArea[1];	ymax = DrawingArea[3];
+	u32 w = le16_to_u16(packet.U2[6]) & 0x3ff; // Max width is 1023
+	u32 h = le16_to_u16(packet.U2[7]) & 0x1ff; // Max height is 511
+	x1 = x0 + w;
+	y1 = y0 + h;
 
-		{
-			int rx0 = Max2(xmin,Min2(x0,x1));
-			int ry0 = Max2(ymin,Min2(y0,y1));
-			int rx1 = Min2(xmax,Max2(x0,x1));
-			int ry1 = Min2(ymax,Max2(y0,y1));
-			if( rx0>=rx1 || ry0>=ry1) return;
-		}
+	s32 xmin, xmax, ymin, ymax;
+	xmin = gpu_unai.DrawingArea[0];	xmax = gpu_unai.DrawingArea[2];
+	ymin = gpu_unai.DrawingArea[1];	ymax = gpu_unai.DrawingArea[3];
 
-		u0 = PacketBuffer.U1[8];
-		v0 = PacketBuffer.U1[9];
+	u0 = packet.U1[8];
+	v0 = packet.U1[9];
 
-		r4 = s32(PacketBuffer.U1[0]);
-		g4 = s32(PacketBuffer.U1[1]);
-		b4 = s32(PacketBuffer.U1[2]);
+	s32 temp;
+	temp = ymin - y0;
+	if (temp > 0) { y0 = ymin; v0 += temp; }
+	if (y1 > ymax) y1 = ymax;
+	if (y1 <= y0) return;
 
-		{
-			s32 temp;
-			temp = ymin - y0;
-			if (temp > 0) { y0 = ymin; v0 += temp; }
-			if (y1 > ymax) y1 = ymax;
-			if (y1 <= y0) return;
-			
-			temp = xmin - x0;
-			if (temp > 0) { x0 = xmin; u0 += temp; }
-			if (x1 > xmax) x1 = xmax;
-			x1 -= x0;
-			if (x1 <= 0) return;
-		}
-	}
+	temp = xmin - x0;
+	if (temp > 0) { x0 = xmin; u0 += temp; }
+	if (x1 > xmax) x1 = xmax;
+	x1 -= x0;
+	if (x1 <= 0) return;
+	*w_out = x1;
+	*h_out = y1 - y0;
 
-	{
-		u16 *Pixel = &((u16*)GPU_FrameBuffer)[FRAME_OFFSET(x0, y0)];
-		const int li=linesInterlace;
-		const u32 masku=TextureWindow[2];
-		const u32 maskv=TextureWindow[3];
+	le16_t *Pixel = &gpu_unai.vram[FRAME_OFFSET(x0, y0)];
 
-		for (;y0<y1;++y0) {
-			if( 0 == (y0&li) ) gpuSpriteSpanDriver(Pixel,x1,FRAME_OFFSET(u0,v0),masku);
-			Pixel += FRAME_WIDTH;
-			v0 = (v0+1)&maskv;
-		}
-	}
+	gpu_unai.inn.r5 = packet.U1[0] >> 3;
+	gpu_unai.inn.g5 = packet.U1[1] >> 3;
+	gpu_unai.inn.b5 = packet.U1[2] >> 3;
+	gpu_unai.inn.u = u0;
+	gpu_unai.inn.v = v0;
+	gpu_unai.inn.y0 = y0;
+	gpu_unai.inn.y1 = y1;
+	gpuSpriteDriver(Pixel, x1, (u8 *)gpu_unai.inn.TBA, gpu_unai.inn);
 }
 
-#ifdef __arm__
-#include "gpu_arm.h"
-
-void gpuDrawS16(void)
+void gpuDrawT(PtrUnion packet, const PT gpuTileDriver, s32 *w_out, s32 *h_out)
 {
-	s32 x0, y0;
-	s32 u0, v0;
-	s32 xmin, xmax;
-	s32 ymin, ymax;
-	u32 h = 16;
+	s32 x0, x1, y0, y1;
 
-	x0 = GPU_EXPANDSIGN(PacketBuffer.S2[2]) + DrawingOffset[0];
-	y0 = GPU_EXPANDSIGN(PacketBuffer.S2[3]) + DrawingOffset[1];
+	// This now matches behavior of Mednafen and PCSX Rearmed's gpu_neon:
+	x0 = GPU_EXPANDSIGN(le16_to_s16(packet.U2[2]) + gpu_unai.DrawingOffset[0]);
+	y0 = GPU_EXPANDSIGN(le16_to_s16(packet.U2[3]) + gpu_unai.DrawingOffset[1]);
 
-	xmin = DrawingArea[0];	xmax = DrawingArea[2];
-	ymin = DrawingArea[1];	ymax = DrawingArea[3];
-	u0 = PacketBuffer.U1[8];
-	v0 = PacketBuffer.U1[9];
+	u32 w = le16_to_u16(packet.U2[4]) & 0x3ff; // Max width is 1023
+	u32 h = le16_to_u16(packet.U2[5]) & 0x1ff; // Max height is 511
+	x1 = x0 + w;
+	y1 = y0 + h;
 
-	if (x0 > xmax - 16 || x0 < xmin ||
-	    ((u0 | v0) & 15) || !(TextureWindow[2] & TextureWindow[3] & 8)) {
-		// send corner cases to general handler
-		PacketBuffer.U4[3] = 0x00100010;
-		gpuDrawS(gpuSpriteSpanFn<0x20>);
-		return;
-	}
+	s32 xmin, xmax, ymin, ymax;
+	xmin = gpu_unai.DrawingArea[0];	xmax = gpu_unai.DrawingArea[2];
+	ymin = gpu_unai.DrawingArea[1];	ymax = gpu_unai.DrawingArea[3];
 
-	if (y0 >= ymax || y0 <= ymin - 16)
-		return;
-	if (y0 < ymin) {
-		h -= ymin - y0;
-		v0 += ymin - y0;
-		y0 = ymin;
-	}
-	else if (ymax - y0 < 16)
-		h = ymax - y0;
+	if (y0 < ymin) y0 = ymin;
+	if (y1 > ymax) y1 = ymax;
+	if (y1 <= y0) return;
 
-	draw_spr16_full(&GPU_FrameBuffer[FRAME_OFFSET(x0, y0)], &TBA[FRAME_OFFSET(u0/4, v0)], CBA, h);
+	if (x0 < xmin) x0 = xmin;
+	if (x1 > xmax) x1 = xmax;
+	x1 -= x0;
+	if (x1 <= 0) return;
+	*w_out = x1;
+	*h_out = y1 - y0;
+
+	const u16 Data = GPU_RGB16(le32_to_u32(packet.U4[0]));
+	le16_t *Pixel = &gpu_unai.vram[FRAME_OFFSET(x0, y0)];
+
+	gpu_unai.inn.y0 = y0;
+	gpu_unai.inn.y1 = y1;
+	gpuTileDriver(Pixel, Data, x1, gpu_unai.inn);
 }
-#endif // __arm__
 
-///////////////////////////////////////////////////////////////////////////////
-void gpuDrawT(const PT gpuTileSpanDriver)
-{
-	s32 x0, y0;
-	s32 x1, y1;
-
-	x1 = x0 = GPU_EXPANDSIGN(PacketBuffer.S2[2]) + DrawingOffset[0];
-	y1 = y0 = GPU_EXPANDSIGN(PacketBuffer.S2[3]) + DrawingOffset[1];
-	x1+= PacketBuffer.S2[4];
-	y1+= PacketBuffer.S2[5];
-
-	{
-		s32 xmin, xmax;
-		s32 ymin, ymax;
-		xmin = DrawingArea[0];	xmax = DrawingArea[2];
-		ymin = DrawingArea[1];	ymax = DrawingArea[3];
-
-		{
-			int rx0 = Max2(xmin,Min2(x0,x1));
-			int ry0 = Max2(ymin,Min2(y0,y1));
-			int rx1 = Min2(xmax,Max2(x0,x1));
-			int ry1 = Min2(ymax,Max2(y0,y1));
-			if(rx0>=rx1 || ry0>=ry1) return;
-		}
-
-		if (y0 < ymin) y0 = ymin;
-		if (y1 > ymax) y1 = ymax;
-		if (y1 <= y0) return;
-
-		if (x0 < xmin) x0 = xmin;
-		if (x1 > xmax) x1 = xmax;
-		x1 -= x0;
-		if (x1 <= 0) return;
-	}
-	
-	{
-		u16 *Pixel = &((u16*)GPU_FrameBuffer)[FRAME_OFFSET(x0, y0)];
-		const u16 Data = GPU_RGB16(PacketBuffer.U4[0]);
-		const int li=linesInterlace;
-
-		for (; y0<y1; ++y0)
-		{
-			if( 0 == (y0&li) ) gpuTileSpanDriver(Pixel,x1,Data);
-			Pixel += FRAME_WIDTH;
-		}
-	}
-}
+#endif /* __GPU_UNAI_GPU_RASTER_SPRITE_H__ */

@@ -22,6 +22,22 @@
 #pragma GCC diagnostic ignored "-Wmisleading-indentation"
 #endif
 
+#ifdef THREAD_RENDERING
+#include "../gpulib/gpulib_thread_if.h"
+#define do_cmd_list real_do_cmd_list
+#define renderer_init real_renderer_init
+#define renderer_finish real_renderer_finish
+#define renderer_sync_ecmds real_renderer_sync_ecmds
+#define renderer_update_caches real_renderer_update_caches
+#define renderer_flush_queues real_renderer_flush_queues
+#define renderer_set_interlace real_renderer_set_interlace
+#define renderer_set_config real_renderer_set_config
+#define renderer_notify_res_change real_renderer_notify_res_change
+#define renderer_notify_update_lace real_renderer_notify_update_lace
+#define renderer_sync real_renderer_sync
+#define ex_regs scratch_ex_regs
+#endif
+
 #define u32 uint32_t
 
 #define INFO_TW        0
@@ -299,16 +315,24 @@ void renderer_notify_res_change(void)
 {
 }
 
+void renderer_notify_scanout_change(int x, int y)
+{
+}
+
+#include "../gpulib/gpu_timing.h"
 extern const unsigned char cmd_lengths[256];
 
-int do_cmd_list(unsigned int *list, int list_len, int *last_cmd)
+int do_cmd_list(uint32_t *list, int list_len,
+ int *cycles_sum_out, int *cycles_last, int *last_cmd)
 {
+  int cpu_cycles_sum = 0, cpu_cycles = *cycles_last;
   unsigned int cmd = 0, len;
-  unsigned int *list_start = list;
-  unsigned int *list_end = list + list_len;
+  uint32_t *list_start = list;
+  uint32_t *list_end = list + list_len;
 
   for (; list < list_end; list += 1 + len)
   {
+    short *slist = (void *)list;
     cmd = GETLE32(list) >> 24;
     len = cmd_lengths[cmd];
     if (list + 1 + len > list_end) {
@@ -317,7 +341,7 @@ int do_cmd_list(unsigned int *list, int list_len, int *last_cmd)
     }
 
 #ifndef TEST
-    if (cmd == 0xa0 || cmd == 0xc0)
+    if (0x80 <= cmd && cmd < 0xe0)
       break; // image i/o, forward to upper layer
     else if ((cmd & 0xf8) == 0xe0)
       gpu.ex_regs[cmd & 7] = GETLE32(list);
@@ -334,6 +358,8 @@ int do_cmd_list(unsigned int *list, int list_len, int *last_cmd)
 
         while(1)
         {
+          gput_sum(cpu_cycles_sum, cpu_cycles, gput_line(0));
+
           if(list_position >= list_end) {
             cmd = -1;
             goto breakloop;
@@ -357,6 +383,8 @@ int do_cmd_list(unsigned int *list, int list_len, int *last_cmd)
 
         while(1)
         {
+          gput_sum(cpu_cycles_sum, cpu_cycles, gput_line(0));
+
           if(list_position >= list_end) {
             cmd = -1;
             goto breakloop;
@@ -376,15 +404,43 @@ int do_cmd_list(unsigned int *list, int list_len, int *last_cmd)
 #ifdef TEST
       case 0xA0:          //  sys -> vid
       {
-        short *slist = (void *)list;
-        u32 load_width = LE2HOST32(slist[4]);
-        u32 load_height = LE2HOST32(slist[5]);
+        u32 load_width = LE2HOST16(slist[4]);
+        u32 load_height = LE2HOST16(slist[5]);
         u32 load_size = load_width * load_height;
 
         len += load_size / 2;
         break;
       }
 #endif
+
+      // timing
+      case 0x02:
+        gput_sum(cpu_cycles_sum, cpu_cycles,
+            gput_fill(LE2HOST16(slist[4]) & 0x3ff, LE2HOST16(slist[5]) & 0x1ff));
+        break;
+      case 0x20 ... 0x23: gput_sum(cpu_cycles_sum, cpu_cycles, gput_poly_base());    break;
+      case 0x24 ... 0x27: gput_sum(cpu_cycles_sum, cpu_cycles, gput_poly_base_t());  break;
+      case 0x28 ... 0x2B: gput_sum(cpu_cycles_sum, cpu_cycles, gput_quad_base());    break;
+      case 0x2C ... 0x2F: gput_sum(cpu_cycles_sum, cpu_cycles, gput_quad_base_t());  break;
+      case 0x30 ... 0x33: gput_sum(cpu_cycles_sum, cpu_cycles, gput_poly_base_g());  break;
+      case 0x34 ... 0x37: gput_sum(cpu_cycles_sum, cpu_cycles, gput_poly_base_gt()); break;
+      case 0x38 ... 0x3B: gput_sum(cpu_cycles_sum, cpu_cycles, gput_quad_base_g());  break;
+      case 0x3C ... 0x3F: gput_sum(cpu_cycles_sum, cpu_cycles, gput_quad_base_gt()); break;
+      case 0x40 ... 0x47: gput_sum(cpu_cycles_sum, cpu_cycles, gput_line(0));        break;
+      case 0x50 ... 0x57: gput_sum(cpu_cycles_sum, cpu_cycles, gput_line(0));        break;
+      case 0x60 ... 0x63:
+        gput_sum(cpu_cycles_sum, cpu_cycles,
+            gput_sprite(LE2HOST16(slist[4]) & 0x3ff, LE2HOST16(slist[5]) & 0x1ff));
+        break;
+      case 0x64 ... 0x67:
+        gput_sum(cpu_cycles_sum, cpu_cycles,
+            gput_sprite(LE2HOST16(slist[6]) & 0x3ff, LE2HOST16(slist[7]) & 0x1ff));
+        break;
+      case 0x68 ... 0x6B: gput_sum(cpu_cycles_sum, cpu_cycles, gput_sprite(1, 1));   break;
+      case 0x70 ... 0x73:
+      case 0x74 ... 0x77: gput_sum(cpu_cycles_sum, cpu_cycles, gput_sprite(8, 8));   break;
+      case 0x78 ... 0x7B:
+      case 0x7C ... 0x7F: gput_sum(cpu_cycles_sum, cpu_cycles, gput_sprite(16, 16)); break;
     }
   }
 
@@ -392,6 +448,8 @@ breakloop:
   gpu.ex_regs[1] &= ~0x1ff;
   gpu.ex_regs[1] |= lGPUstatusRet & 0x1ff;
 
+  *cycles_sum_out += cpu_cycles_sum;
+  *cycles_last = cpu_cycles;
   *last_cmd = cmd;
   return list - list_start;
 }
@@ -414,7 +472,7 @@ void renderer_sync_ecmds(uint32_t *ecmds_)
   cmdSTP((unsigned char *)&ecmds[6]);
 }
 
-void renderer_update_caches(int x, int y, int w, int h)
+void renderer_update_caches(int x, int y, int w, int h, int state_changed)
 {
 }
 
@@ -426,13 +484,23 @@ void renderer_set_interlace(int enable, int is_odd)
 {
 }
 
+void renderer_sync(void)
+{
+}
+
+void renderer_notify_update_lace(int updated)
+{
+}
+
 #include "../../frontend/plugin_lib.h"
 
 void renderer_set_config(const struct rearmed_cbs *cbs)
 {
- iUseDither = cbs->gpu_peops.iUseDither;
+ iUseDither = cbs->dithering;
  dwActFixes = cbs->gpu_peops.dwActFixes;
  if (cbs->pl_set_gpu_caps)
   cbs->pl_set_gpu_caps(0);
  set_vram(gpu.vram);
 }
+
+// vim:ts=2:shiftwidth=2:expandtab

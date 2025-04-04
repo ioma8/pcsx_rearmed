@@ -46,6 +46,12 @@ extern "C" {
 
 #endif
 
+#ifdef LIGHTREC
+#define INVALID_PTR ((void *)-1)
+#else
+#define INVALID_PTR NULL
+#endif
+
 extern s8 *psxM;
 #define psxMs8(mem)		psxM[(mem) & 0x1fffff]
 #define psxMs16(mem)	(SWAP16(*(s16 *)&psxM[(mem) & 0x1fffff]))
@@ -108,8 +114,53 @@ extern s8 *psxH;
 
 extern u8 **psxMemWLUT;
 extern u8 **psxMemRLUT;
+extern int cache_isolated;
 
-#define PSXM(mem)		(psxMemRLUT[(mem) >> 16] == 0 ? NULL : (u8*)(psxMemRLUT[(mem) >> 16] + ((mem) & 0xffff)))
+#ifndef DISABLE_MEM_LUTS
+#define DISABLE_MEM_LUTS 0
+#endif
+
+static inline void * psxm_lut(u32 mem, int write, u8 **lut)
+{
+	if (!DISABLE_MEM_LUTS) {
+		void *ptr = lut[mem >> 16];
+
+		return ptr == INVALID_PTR ? INVALID_PTR
+			: (void *)((uintptr_t)ptr + (u16)mem);
+	}
+
+	if (mem >= 0xa0000000)
+		mem -= 0xa0000000;
+	else
+		mem &= ~0x80000000;
+
+	if (mem < 0x800000) {
+		if (cache_isolated)
+			return INVALID_PTR;
+
+		return &psxM[mem & 0x1fffff];
+	}
+
+	if (mem > 0x1f800000 && mem <= 0x1f810000)
+		return &psxH[mem - 0x1f800000];
+
+	if (!write) {
+		if (mem > 0x1fc00000 && mem <= 0x1fc80000)
+			return &psxR[mem - 0x1fc00000];
+
+		if (mem > 0x1f000000 && mem <= 0x1f010000)
+			return &psxP[mem - 0x1f000000];
+	}
+
+	return INVALID_PTR;
+}
+
+static inline void * psxm(u32 mem, int write)
+{
+	return psxm_lut(mem, write, write ? psxMemWLUT : psxMemRLUT);
+}
+
+#define PSXM(mem) psxm(mem, 0)
 #define PSXMs8(mem)		(*(s8 *)PSXM(mem))
 #define PSXMs16(mem)	(SWAP16(*(s16 *)PSXM(mem)))
 #define PSXMs32(mem)	(SWAP32(*(s32 *)PSXM(mem)))
@@ -121,13 +172,14 @@ extern u8 **psxMemRLUT;
 
 int psxMemInit();
 void psxMemReset();
+void psxMemOnIsolate(int enable);
 void psxMemShutdown();
 
 u8 psxMemRead8 (u32 mem);
 u16 psxMemRead16(u32 mem);
 u32 psxMemRead32(u32 mem);
-void psxMemWrite8 (u32 mem, u8 value);
-void psxMemWrite16(u32 mem, u16 value);
+void psxMemWrite8 (u32 mem, u32 value);
+void psxMemWrite16(u32 mem, u32 value);
 void psxMemWrite32(u32 mem, u32 value);
 void *psxMemPointer(u32 mem);
 

@@ -49,11 +49,9 @@ the emulator.
 Supported CD image formats:
 - .bin/.cue
 - .bin/.toc
+- .chd
 - .img/.ccd/.sub
 - .mdf/.mds
-- .Z/.Z.table
-- .bz/.bz.table
-- .ZNX/.ZNX.table (partial)
 - EBOOT.PBP (PSP, partial)
 - .cbn
 
@@ -87,10 +85,9 @@ GPU (graphics) and SPU (sound) plugins can be selected in
 builtin_gpu    - this is either Exophase's ARM NEON GPU (accurate and fast,
                  available if platform supports NEON, like on pandora),
                  gpu_peops or gpu_unai (depends on compile options).
+gpu_neon.so    - Exophase's ARM NEON GPU with ARMv7 assembly optimizations.
 gpu_peops.so   - P.E.Op.S. soft GPU, reasonably accurate but slow
                  (also found with older emulators on PC)
-gpu_unai.so    - Unai's plugin from PCSX4ALL project. Faster than P.E.Op.S.
-                 but has some glitches.
 gpu_gles.so    - experimental port of P.E.Op.S. MesaGL plugin to OpenGL ES.
                  Occasionally faster but has lots of glitches and seems to
                  be rather unstable (may crash the driver/system).
@@ -112,6 +109,17 @@ the main menu where it is possible to enable/disable individual cheats.
 
 Changelog
 ---------
+
+r25 (2025-02-26)
+* bug fixes and compatibility improvements
+
+r24 (2024-01-22)
+* HLE compatibility has been greatly improved
+* various compatibility and accuracy improvements
++ support for more lightgun types
+- savestates from older versions might not work, especially if HLE was used.
+  Memory card files remain fully compatible.
+* many small changes I forgot about
 
 r23 (2022-03-14)
 * many fixes from various contributors on github and from the libretro fork

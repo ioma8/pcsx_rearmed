@@ -26,6 +26,14 @@
 #include "mdec.h"
 #include "gte.h"
 #include "psxinterpreter.h"
+#include "psxbios.h"
+#include "psxevents.h"
+#include "../include/compiler_features.h"
+#include <assert.h>
+
+#ifndef ARRAY_SIZE
+#define ARRAY_SIZE(x) (sizeof(x) / sizeof(x[0]))
+#endif
 
 R3000Acpu *psxCpu = NULL;
 #ifdef DRC_DISABLE
@@ -33,7 +41,8 @@ psxRegisters psxRegs;
 #endif
 
 int psxInit() {
-	SysPrintf(_("Running PCSX Version %s (%s).\n"), PACKAGE_VERSION, __DATE__);
+	assert(PSXINT_COUNT <= ARRAY_SIZE(psxRegs.intCycle));
+	assert(ARRAY_SIZE(psxRegs.intCycle) == ARRAY_SIZE(psxRegs.event_cycles));
 
 #ifndef DRC_DISABLE
 	if (Config.Cpu == CPU_INTERPRETER) {
@@ -52,23 +61,41 @@ int psxInit() {
 }
 
 void psxReset() {
+	boolean introBypassed = FALSE;
+	boolean oldhle = Config.HLE;
+
 	psxMemReset();
 
 	memset(&psxRegs, 0, sizeof(psxRegs));
 
 	psxRegs.pc = 0xbfc00000; // Start in bootstrap
 
-	psxRegs.CP0.r[12] = 0x10900000; // COP0 enabled | BEV = 1 | TS = 1
-	psxRegs.CP0.r[15] = 0x00000002; // PRevID = Revision ID, same as R3000A
+	psxRegs.CP0.n.SR   = 0x10600000; // COP0 enabled | BEV = 1 | TS = 1
+	psxRegs.CP0.n.PRid = 0x00000002; // PRevID = Revision ID, same as R3000A
+	if (Config.HLE) {
+		psxRegs.CP0.n.SR |= 1u << 30;    // COP2 enabled
+		psxRegs.CP0.n.SR &= ~(1u << 22); // RAM exception vector
+	}
 
+	if (Config.HLE != oldhle) {
+		// at least ari64 drc compiles differently so hard reset
+		psxCpu->Shutdown();
+		psxCpu->Init();
+	}
 	psxCpu->ApplyConfig();
 	psxCpu->Reset();
 
 	psxHwReset();
 	psxBiosInit();
 
-	if (!Config.HLE)
+	if (!Config.HLE) {
 		psxExecuteBios();
+		if (psxRegs.pc == 0x80030000 && !Config.SlowBoot) {
+			introBypassed = BiosBootBypass();
+		}
+	}
+	if (Config.HLE || introBypassed)
+		psxBiosSetupBootState();
 
 #ifdef EMU_LOG
 	EMU_LOG("*BIOS END*\n");
@@ -77,130 +104,50 @@ void psxReset() {
 }
 
 void psxShutdown() {
-	psxMemShutdown();
 	psxBiosShutdown();
 
 	psxCpu->Shutdown();
+
+	psxMemShutdown();
 }
 
-void psxException(u32 code, u32 bd) {
-	psxRegs.code = PSXMu32(psxRegs.pc);
+// cp0 is passed separately for lightrec to be less messy
+void psxException(u32 cause, enum R3000Abdt bdt, psxCP0Regs *cp0) {
+	u32 opcode = intFakeFetch(psxRegs.pc);
 	
-	if (!Config.HLE && ((((psxRegs.code) >> 24) & 0xfe) == 0x4a)) {
+	if (unlikely(!Config.HLE && (opcode >> 25) == 0x25)) {
 		// "hokuto no ken" / "Crash Bandicot 2" ...
 		// BIOS does not allow to return to GTE instructions
 		// (just skips it, supposedly because it's scheduled already)
 		// so we execute it here
-		psxCP2[psxRegs.code & 0x3f](&psxRegs.CP2);
+		psxCP2Regs *cp2 = (psxCP2Regs *)(cp0 + 1);
+		psxRegs.code = opcode;
+		psxCP2[opcode & 0x3f](cp2);
 	}
 
 	// Set the Cause
-	psxRegs.CP0.n.Cause = (psxRegs.CP0.n.Cause & 0x300) | code;
+	cp0->n.Cause = (bdt << 30) | (cp0->n.Cause & 0x700) | cause;
 
 	// Set the EPC & PC
-	if (bd) {
-#ifdef PSXCPU_LOG
-		PSXCPU_LOG("bd set!!!\n");
-#endif
-		psxRegs.CP0.n.Cause |= 0x80000000;
-		psxRegs.CP0.n.EPC = (psxRegs.pc - 4);
-	} else
-		psxRegs.CP0.n.EPC = (psxRegs.pc);
+	cp0->n.EPC = bdt ? psxRegs.pc - 4 : psxRegs.pc;
 
-	if (psxRegs.CP0.n.Status & 0x400000)
+	if (cp0->n.SR & 0x400000)
 		psxRegs.pc = 0xbfc00180;
 	else
 		psxRegs.pc = 0x80000080;
 
-	// Set the Status
-	psxRegs.CP0.n.Status = (psxRegs.CP0.n.Status &~0x3f) |
-						  ((psxRegs.CP0.n.Status & 0xf) << 2);
-
-	if (Config.HLE) psxBiosException();
+	// Set the SR
+	cp0->n.SR = (cp0->n.SR & ~0x3f) | ((cp0->n.SR & 0x0f) << 2);
 }
 
 void psxBranchTest() {
-	if ((psxRegs.cycle - psxNextsCounter) >= psxNextCounter)
+	if ((psxRegs.cycle - psxRegs.psxNextsCounter) >= psxRegs.psxNextCounter)
 		psxRcntUpdate();
 
-	if (psxRegs.interrupt) {
-		if ((psxRegs.interrupt & (1 << PSXINT_SIO))) { // sio
-			if ((psxRegs.cycle - psxRegs.intCycle[PSXINT_SIO].sCycle) >= psxRegs.intCycle[PSXINT_SIO].cycle) {
-				psxRegs.interrupt &= ~(1 << PSXINT_SIO);
-				sioInterrupt();
-			}
-		}
-		if (psxRegs.interrupt & (1 << PSXINT_CDR)) { // cdr
-			if ((psxRegs.cycle - psxRegs.intCycle[PSXINT_CDR].sCycle) >= psxRegs.intCycle[PSXINT_CDR].cycle) {
-				psxRegs.interrupt &= ~(1 << PSXINT_CDR);
-				cdrInterrupt();
-			}
-		}
-		if (psxRegs.interrupt & (1 << PSXINT_CDREAD)) { // cdr read
-			if ((psxRegs.cycle - psxRegs.intCycle[PSXINT_CDREAD].sCycle) >= psxRegs.intCycle[PSXINT_CDREAD].cycle) {
-				psxRegs.interrupt &= ~(1 << PSXINT_CDREAD);
-				cdrPlayReadInterrupt();
-			}
-		}
-		if (psxRegs.interrupt & (1 << PSXINT_GPUDMA)) { // gpu dma
-			if ((psxRegs.cycle - psxRegs.intCycle[PSXINT_GPUDMA].sCycle) >= psxRegs.intCycle[PSXINT_GPUDMA].cycle) {
-				psxRegs.interrupt &= ~(1 << PSXINT_GPUDMA);
-				gpuInterrupt();
-			}
-		}
-		if (psxRegs.interrupt & (1 << PSXINT_MDECOUTDMA)) { // mdec out dma
-			if ((psxRegs.cycle - psxRegs.intCycle[PSXINT_MDECOUTDMA].sCycle) >= psxRegs.intCycle[PSXINT_MDECOUTDMA].cycle) {
-				psxRegs.interrupt &= ~(1 << PSXINT_MDECOUTDMA);
-				mdec1Interrupt();
-			}
-		}
-		if (psxRegs.interrupt & (1 << PSXINT_SPUDMA)) { // spu dma
-			if ((psxRegs.cycle - psxRegs.intCycle[PSXINT_SPUDMA].sCycle) >= psxRegs.intCycle[PSXINT_SPUDMA].cycle) {
-				psxRegs.interrupt &= ~(1 << PSXINT_SPUDMA);
-				spuInterrupt();
-			}
-		}
-		if (psxRegs.interrupt & (1 << PSXINT_MDECINDMA)) { // mdec in
-			if ((psxRegs.cycle - psxRegs.intCycle[PSXINT_MDECINDMA].sCycle) >= psxRegs.intCycle[PSXINT_MDECINDMA].cycle) {
-				psxRegs.interrupt &= ~(1 << PSXINT_MDECINDMA);
-				mdec0Interrupt();
-			}
-		}
-		if (psxRegs.interrupt & (1 << PSXINT_GPUOTCDMA)) { // gpu otc
-			if ((psxRegs.cycle - psxRegs.intCycle[PSXINT_GPUOTCDMA].sCycle) >= psxRegs.intCycle[PSXINT_GPUOTCDMA].cycle) {
-				psxRegs.interrupt &= ~(1 << PSXINT_GPUOTCDMA);
-				gpuotcInterrupt();
-			}
-		}
-		if (psxRegs.interrupt & (1 << PSXINT_CDRDMA)) { // cdrom
-			if ((psxRegs.cycle - psxRegs.intCycle[PSXINT_CDRDMA].sCycle) >= psxRegs.intCycle[PSXINT_CDRDMA].cycle) {
-				psxRegs.interrupt &= ~(1 << PSXINT_CDRDMA);
-				cdrDmaInterrupt();
-			}
-		}
-		if (psxRegs.interrupt & (1 << PSXINT_CDRLID)) { // cdr lid states
-			if ((psxRegs.cycle - psxRegs.intCycle[PSXINT_CDRLID].sCycle) >= psxRegs.intCycle[PSXINT_CDRLID].cycle) {
-				psxRegs.interrupt &= ~(1 << PSXINT_CDRLID);
-				cdrLidSeekInterrupt();
-			}
-		}
-		if (psxRegs.interrupt & (1 << PSXINT_SPU_UPDATE)) { // scheduled spu update
-			if ((psxRegs.cycle - psxRegs.intCycle[PSXINT_SPU_UPDATE].sCycle) >= psxRegs.intCycle[PSXINT_SPU_UPDATE].cycle) {
-				psxRegs.interrupt &= ~(1 << PSXINT_SPU_UPDATE);
-				spuUpdate();
-			}
-		}
-	}
+	irq_test(&psxRegs.CP0);
 
-	if (psxHu32(0x1070) & psxHu32(0x1074)) {
-		if ((psxRegs.CP0.n.Status & 0x401) == 0x401) {
-#ifdef PSXCPU_LOG
-			PSXCPU_LOG("Interrupt: %x %x\n", psxHu32(0x1070), psxHu32(0x1074));
-#endif
-//			SysPrintf("Interrupt (%x): %x %x\n", psxRegs.cycle, psxHu32(0x1070), psxHu32(0x1074));
-			psxException(0x400, 0);
-		}
-	}
+	if (unlikely(psxRegs.pc == psxRegs.biosBranchCheck))
+		psxBiosCheckBranch();
 }
 
 void psxJumpTest() {
@@ -234,8 +181,60 @@ void psxJumpTest() {
 	}
 }
 
-void psxExecuteBios() {
-	while (psxRegs.pc != 0x80030000)
-		psxCpu->ExecuteBlock();
+int psxExecuteBiosEnded(void) {
+	return (psxRegs.pc & 0xff800000) == 0x80000000;
 }
 
+void psxExecuteBios() {
+	int i;
+	for (i = 0; i < 5000000; i++) {
+		psxCpu->ExecuteBlock(&psxRegs, EXEC_CALLER_BOOT);
+		if (psxExecuteBiosEnded())
+			break;
+	}
+	if (psxRegs.pc != 0x80030000)
+		SysPrintf("non-standard BIOS detected (%d, %08x)\n", i, psxRegs.pc);
+}
+
+// irq10 stuff, very preliminary
+static int irq10count;
+
+static void psxScheduleIrq10One(u32 cycles_abs) {
+	// schedule relative to frame start
+	u32 c = cycles_abs - rcnts[3].cycleStart;
+	assert((s32)c >= 0);
+	psxRegs.interrupt |= 1 << PSXINT_IRQ10;
+	psxRegs.intCycle[PSXINT_IRQ10].cycle = c;
+	psxRegs.intCycle[PSXINT_IRQ10].sCycle = rcnts[3].cycleStart;
+	set_event_raw_abs(PSXINT_IRQ10, cycles_abs);
+}
+
+void irq10Interrupt() {
+	u32 prevc = psxRegs.intCycle[PSXINT_IRQ10].sCycle
+		+ psxRegs.intCycle[PSXINT_IRQ10].cycle;
+
+	psxHu32ref(0x1070) |= SWAPu32(0x400);
+
+#if 0
+	s32 framec = psxRegs.cycle - rcnts[3].cycleStart;
+	printf("%d:%03d irq10 #%d %3d m=%d,%d\n", frame_counter,
+		(s32)((float)framec / (PSXCLK / 60 / 263.0f)),
+		irq10count, psxRegs.cycle - prevc,
+		(psxRegs.CP0.n.SR & 0x401) != 0x401, !(psxHu32(0x1074) & 0x400));
+#endif
+	if (--irq10count > 0) {
+		u32 cycles_per_line = Config.PsxType
+			? PSXCLK / 50 / 314 : PSXCLK / 60 / 263;
+		psxScheduleIrq10One(prevc + cycles_per_line);
+	}
+}
+
+void psxScheduleIrq10(int irq_count, int x_cycles, int y) {
+	//printf("%s %d, %d, %d\n", __func__, irq_count, x_cycles, y);
+	u32 cycles_per_frame = Config.PsxType ? PSXCLK / 50 : PSXCLK / 60;
+	u32 cycles = rcnts[3].cycleStart + cycles_per_frame;
+	cycles += y * cycles_per_frame / (Config.PsxType ? 314 : 263);
+	cycles += x_cycles;
+	psxScheduleIrq10One(cycles);
+	irq10count = irq_count;
+}

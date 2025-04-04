@@ -29,9 +29,7 @@ extern "C" {
 #include "psxmem.h"
 #include "plugins.h"
 
-extern u32 psxNextCounter, psxNextsCounter;
-
-extern u32 hSyncCount, frame_counter;
+extern unsigned int hSyncCount, frame_counter;
 
 typedef struct Rcnt
 {
@@ -48,11 +46,15 @@ void psxRcntWcount(u32 index, u32 value);
 void psxRcntWmode(u32 index, u32 value);
 void psxRcntWtarget(u32 index, u32 value);
 
-u32 psxRcntRcount(u32 index);
+u32 psxRcntRcount0();
+u32 psxRcntRcount1();
+u32 psxRcntRcount2();
 u32 psxRcntRmode(u32 index);
 u32 psxRcntRtarget(u32 index);
 
 s32 psxRcntFreeze(void *f, s32 Mode);
+
+double psxGetFps();
 
 #ifdef __cplusplus
 }

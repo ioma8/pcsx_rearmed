@@ -21,8 +21,15 @@
 * SIO functions.
 */
 
+#include "misc.h"
+#include "psxcounters.h"
+#include "psxevents.h"
 #include "sio.h"
 #include <sys/stat.h>
+
+#ifdef USE_LIBRETRO_VFS
+#include <streams/file_stream_transforms.h>
+#endif
 
 // Status Flags
 #define TX_RDY		0x0001
@@ -67,79 +74,55 @@ static unsigned int padst;
 char Mcd1Data[MCD_SIZE], Mcd2Data[MCD_SIZE];
 char McdDisable[2];
 
-#define SIO_INT(eCycle) { \
-	psxRegs.interrupt |= (1 << PSXINT_SIO); \
-	psxRegs.intCycle[PSXINT_SIO].cycle = eCycle; \
-	psxRegs.intCycle[PSXINT_SIO].sCycle = psxRegs.cycle; \
-	new_dyna_set_event(PSXINT_SIO, eCycle); \
-}
-
 // clk cycle byte
 // 4us * 8bits = (PSXCLK / 1000000) * 32; (linuzappz)
 // TODO: add SioModePrescaler and BaudReg
 #define SIO_CYCLES		535
 
 void sioWrite8(unsigned char value) {
-#ifdef PAD_LOG
-	PAD_LOG("sio write8 %x\n", value);
+	int more_data = 0;
+#if 0
+	s32 framec = psxRegs.cycle - rcnts[3].cycleStart;
+	printf("%d:%03d sio write8 %04x %02x\n", frame_counter,
+		(s32)(framec / (PSXCLK / 60 / 263.0f)), CtrlReg, value);
 #endif
 	switch (padst) {
-		case 1: SIO_INT(SIO_CYCLES);
+		case 1:
 			if ((value & 0x40) == 0x40) {
 				padst = 2; parp = 1;
-				if (!Config.UseNet) {
-					switch (CtrlReg & 0x2002) {
-						case 0x0002:
-							buf[parp] = PAD1_poll(value);
-							break;
-						case 0x2002:
-							buf[parp] = PAD2_poll(value);
-							break;
-					}
-				}/* else {
-//					SysPrintf("%x: %x, %x, %x, %x\n", CtrlReg&0x2002, buf[2], buf[3], buf[4], buf[5]);
-				}*/
-
-				if (!(buf[parp] & 0x0f)) {
-					bufcount = 2 + 32;
-				} else {
-					bufcount = 2 + (buf[parp] & 0x0f) * 2;
+				switch (CtrlReg & 0x2002) {
+					case 0x0002:
+						buf[parp] = PAD1_poll(value, &more_data);
+						break;
+					case 0x2002:
+						buf[parp] = PAD2_poll(value, &more_data);
+						break;
 				}
-				if (buf[parp] == 0x41) {
-					switch (value) {
-						case 0x43:
-							buf[1] = 0x43;
-							break;
-						case 0x45:
-							buf[1] = 0xf3;
-							break;
-					}
+
+				if (more_data) {
+					bufcount = parp + 1;
+					set_event(PSXINT_SIO, SIO_CYCLES);
 				}
 			}
 			else padst = 0;
 			return;
 		case 2:
 			parp++;
-/*			if (buf[1] == 0x45) {
-				buf[parp] = 0;
-				SIO_INT(SIO_CYCLES);
-				return;
-			}*/
-			if (!Config.UseNet) {
-				switch (CtrlReg & 0x2002) {
-					case 0x0002: buf[parp] = PAD1_poll(value); break;
-					case 0x2002: buf[parp] = PAD2_poll(value); break;
-				}
+			switch (CtrlReg & 0x2002) {
+				case 0x0002: buf[parp] = PAD1_poll(value, &more_data); break;
+				case 0x2002: buf[parp] = PAD2_poll(value, &more_data); break;
 			}
 
-			if (parp == bufcount) { padst = 0; return; }
-			SIO_INT(SIO_CYCLES);
+			if (more_data) {
+				bufcount = parp + 1;
+				set_event(PSXINT_SIO, SIO_CYCLES);
+			}
 			return;
 	}
 
 	switch (mcdst) {
 		case 1:
-			SIO_INT(SIO_CYCLES);
+			set_event(PSXINT_SIO, SIO_CYCLES);
 			if (rdwr) { parp++; return; }
 			parp = 1;
 			switch (value) {
@@ -149,7 +132,7 @@ void sioWrite8(unsigned char value) {
 			}
 			return;
 		case 2: // address H
-			SIO_INT(SIO_CYCLES);
+			set_event(PSXINT_SIO, SIO_CYCLES);
 			adrH = value;
 			*buf = 0;
 			parp = 0;
@@ -157,7 +140,7 @@ void sioWrite8(unsigned char value) {
 			mcdst = 3;
 			return;
 		case 3: // address L
-			SIO_INT(SIO_CYCLES);
+			set_event(PSXINT_SIO, SIO_CYCLES);
 			adrL = value;
 			*buf = adrH;
 			parp = 0;
@@ -165,7 +148,7 @@ void sioWrite8(unsigned char value) {
 			mcdst = 4;
 			return;
 		case 4:
-			SIO_INT(SIO_CYCLES);
+			set_event(PSXINT_SIO, SIO_CYCLES);
 			parp = 0;
 			switch (rdwr) {
 				case 1: // read
@@ -215,7 +198,7 @@ void sioWrite8(unsigned char value) {
 			if (rdwr == 2) {
 				if (parp < 128) buf[parp + 1] = value;
 			}
-			SIO_INT(SIO_CYCLES);
+			set_event(PSXINT_SIO, SIO_CYCLES);
 			return;
 	}
 
@@ -223,47 +206,14 @@ void sioWrite8(unsigned char value) {
 		case 0x01: // start pad
 			StatReg |= RX_RDY;		// Transfer is Ready
 
-			if (!Config.UseNet) {
-				switch (CtrlReg & 0x2002) {
-					case 0x0002: buf[0] = PAD1_startPoll(1); break;
-					case 0x2002: buf[0] = PAD2_startPoll(2); break;
-				}
-			} else {
-				if ((CtrlReg & 0x2002) == 0x0002) {
-					int i, j;
-
-					PAD1_startPoll(1);
-					buf[0] = 0;
-					buf[1] = PAD1_poll(0x42);
-					if (!(buf[1] & 0x0f)) {
-						bufcount = 32;
-					} else {
-						bufcount = (buf[1] & 0x0f) * 2;
-					}
-					buf[2] = PAD1_poll(0);
-					i = 3;
-					j = bufcount;
-					while (j--) {
-						buf[i++] = PAD1_poll(0);
-					}
-					bufcount+= 3;
-
-					if (NET_sendPadData(buf, bufcount) == -1)
-						netError();
-
-					if (NET_recvPadData(buf, 1) == -1)
-						netError();
-					if (NET_recvPadData(buf + 128, 2) == -1)
-						netError();
-				} else {
-					memcpy(buf, buf + 128, 32);
-				}
+			switch (CtrlReg & 0x2002) {
+				case 0x0002: buf[0] = PAD1_startPoll(1); break;
+				case 0x2002: buf[0] = PAD2_startPoll(2); break;
 			}
-
-			bufcount = 2;
+			bufcount = 1;
 			parp = 0;
 			padst = 1;
-			SIO_INT(SIO_CYCLES);
+			set_event(PSXINT_SIO, SIO_CYCLES);
 			return;
 		case 0x81: // start memcard
 			if (CtrlReg & 0x2000)
@@ -283,7 +233,7 @@ void sioWrite8(unsigned char value) {
 			bufcount = 3;
 			mcdst = 1;
 			rdwr = 0;
-			SIO_INT(SIO_CYCLES);
+			set_event(PSXINT_SIO, SIO_CYCLES);
 			return;
 		default:
 		no_device:
@@ -347,8 +297,10 @@ unsigned char sioRead8() {
 		}
 	}
 
-#ifdef PAD_LOG
-	PAD_LOG("sio read8 ;ret = %x\n", ret);
+#if 0
+	s32 framec = psxRegs.cycle - rcnts[3].cycleStart;
+	printf("%d:%03d sio read8  %04x %02x\n", frame_counter,
+		(s32)((float)framec / (PSXCLK / 60 / 263.0f)), CtrlReg, ret);
 #endif
 	return ret;
 }
@@ -367,16 +319,6 @@ unsigned short sioReadCtrl16() {
 
 unsigned short sioReadBaud16() {
 	return BaudReg;
-}
-
-void netError() {
-	ClosePlugins();
-	SysMessage(_("Connection closed!\n"));
-
-	CdromId[0] = '\0';
-	CdromLabel[0] = '\0';
-
-	SysRunGui();
 }
 
 void sioInterrupt() {
@@ -407,6 +349,12 @@ void LoadMcd(int mcd, char *str) {
 	}
 
 	McdDisable[mcd - 1] = 0;
+#ifdef HAVE_LIBRETRO
+	// memcard1 is handled by libretro
+	if (mcd == 1)
+		return;
+#endif
+
 	if (str == NULL || strcmp(str, "none") == 0) {
 		McdDisable[mcd - 1] = 1;
 		return;
@@ -428,7 +376,12 @@ void LoadMcd(int mcd, char *str) {
 				else if(buf.st_size == MCD_SIZE + 3904)
 					fseek(f, 3904, SEEK_SET);
 			}
-			fread(data, 1, MCD_SIZE, f);
+			if (fread(data, 1, MCD_SIZE, f) != MCD_SIZE) {
+#ifndef NDEBUG
+				SysPrintf(_("File IO error in <%s:%s>.\n"), __FILE__, __func__);
+#endif
+				memset(data, 0x00, MCD_SIZE);
+			}
 			fclose(f);
 		}
 		else
@@ -443,7 +396,12 @@ void LoadMcd(int mcd, char *str) {
 			else if(buf.st_size == MCD_SIZE + 3904)
 				fseek(f, 3904, SEEK_SET);
 		}
-		fread(data, 1, MCD_SIZE, f);
+		if (fread(data, 1, MCD_SIZE, f) != MCD_SIZE) {
+#ifndef NDEBUG
+			SysPrintf(_("File IO error in <%s:%s>.\n"), __FILE__, __func__);
+#endif
+			memset(data, 0x00, MCD_SIZE);
+		}
 		fclose(f);
 	}
 }
@@ -658,6 +616,7 @@ void ConvertMcd(char *mcd, char *data) {
 			fclose(f);
 		}
 		f = fopen(mcd, "r+");
+		if (f == NULL) return;
 		s = s + 3904;
 		fputc('1', f); s--;
 		fputc('2', f); s--;
@@ -692,6 +651,7 @@ void ConvertMcd(char *mcd, char *data) {
 			fclose(f);
 		}
 		f = fopen(mcd, "r+");
+		if (f == NULL) return;
 		s = s + 64;
 		fputc('V', f); s--;
 		fputc('g', f); s--;

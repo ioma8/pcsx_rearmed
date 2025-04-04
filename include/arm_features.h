@@ -47,10 +47,19 @@
 
 #endif
 
-/* no need for HAVE_NEON - GCC defines __ARM_NEON__ consistently */
+/* gcc defines __ARM_NEON__ consistently for 32bit, but apple clang defines it for 64bit also... */
+#if defined(HAVE_ARMV7) && defined(__ARM_NEON__)
+#define HAVE_NEON32
+#endif
+
+#if defined(__APPLE__) && defined(__aarch64__)
+#define ASM_SEPARATOR %%
+#else
+#define ASM_SEPARATOR ;
+#endif
 
 /* global function/external symbol */
-#ifndef __MACH__
+#ifndef __APPLE__
 #define ESYM(name) name
 
 #define FUNCTION(name) \
@@ -58,15 +67,24 @@
   .type name, %function; \
   name
 
+#define ESIZE(name_, size_) \
+  .size name_, size_
+
+#define EOBJECT(name_) \
+  .type name_, %object
+
 #define EXTRA_UNSAVED_REGS
 
 #else
 #define ESYM(name) _##name
 
 #define FUNCTION(name) \
-  .globl ESYM(name); \
-  name: \
+  name: ASM_SEPARATOR \
+  .globl ESYM(name) ASM_SEPARATOR \
   ESYM(name)
+
+#define ESIZE(name_, size_)
+#define EOBJECT(name_)
 
 // r7 is preserved, but add it for EABI alignment..
 #define EXTRA_UNSAVED_REGS r7, r9,

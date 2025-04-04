@@ -34,10 +34,12 @@
  */
  
 /*
- * >= 10 for Galerians
+ * >= 14 for Sol Divide
  * <= 18 for "Disney's Treasure Planet"
+ * Psychic Detective may break on *any* change
  */
-#define MDEC_BIAS 10
+#define MDEC_BIAS 14
+#define MDEC_DELAY 1024
 
 #define DSIZE			8
 #define DSIZE2			(DSIZE * DSIZE)
@@ -227,8 +229,8 @@ struct _pending_dma1 {
 static struct {
 	u32 reg0;
 	u32 reg1;
-	u16 * rl;
-	u16 * rl_end;
+	const u16 * rl;
+	const u16 * rl_end;
 	u8 * block_buffer_pos;
 	u8 block_buffer[16*16*3];
 	struct _pending_dma1 pending_dma1;
@@ -258,7 +260,7 @@ static int aanscales[DSIZE2] = {
 	289301,  401273,  377991,  340183,  289301,  227303, 156569,  79818
 };
 
-static void iqtab_init(int *iqtab, unsigned char *iq_y) {
+static void iqtab_init(int *iqtab, const unsigned char *iq_y) {
 	int i;
 
 	for (i = 0; i < DSIZE2; i++) {
@@ -268,7 +270,7 @@ static void iqtab_init(int *iqtab, unsigned char *iq_y) {
 
 #define	MDEC_END_OF_DATA	0xfe00
 
-static unsigned short *rl2blk(int *blk, unsigned short *mdec_rl) {
+static const unsigned short *rl2blk(int *blk, const unsigned short *mdec_rl) {
 	int i, k, q_scale, rl, used_col;
  	int *iqtab;
 
@@ -323,11 +325,22 @@ static unsigned short *rl2blk(int *blk, unsigned short *mdec_rl) {
 #define	SCALE8(c)				SCALER(c, 20) 
 #define SCALE5(c)				SCALER(c, 23)
 
-#define CLAMP5(c)	( ((c) < -16) ? 0 : (((c) > (31 - 16)) ? 31 : ((c) + 16)) )
-#define CLAMP8(c)	( ((c) < -128) ? 0 : (((c) > (255 - 128)) ? 255 : ((c) + 128)) )
+static inline int clamp5(int v)
+{
+	v += 16;
+	v = v < 0 ? 0 : (v > 31 ? 31 : v);
+	return v;
+}
 
-#define CLAMP_SCALE8(a)   (CLAMP8(SCALE8(a)))
-#define CLAMP_SCALE5(a)   (CLAMP5(SCALE5(a)))
+static inline int clamp8(int v)
+{
+	v += 128;
+	v = v < 0 ? 0 : (v > 255 ? 255 : v);
+	return v;
+}
+
+#define CLAMP_SCALE8(a)   (clamp8(SCALE8(a)))
+#define CLAMP_SCALE5(a)   (clamp5(SCALE5(a)))
 
 static inline void putlinebw15(u16 *image, int *Yblk) {
 	int i;
@@ -336,7 +349,7 @@ static inline void putlinebw15(u16 *image, int *Yblk) {
 	for (i = 0; i < 8; i++, Yblk++) {
 		int Y = *Yblk;
 		// missing rounding
-		image[i] = SWAP16((CLAMP5(Y >> 3) * 0x421) | A);
+		image[i] = SWAP16((clamp5(Y >> 3) * 0x421) | A);
 	}
 }
 
@@ -385,7 +398,7 @@ static inline void putlinebw24(u8 * image, int *Yblk) {
 	int i;
 	unsigned char Y;
 	for (i = 0; i < 8 * 3; i += 3, Yblk++) {
-		Y = CLAMP8(*Yblk);
+		Y = clamp8(*Yblk);
 		image[i + 0] = Y;
 		image[i + 1] = Y;
 		image[i + 2] = Y;
@@ -472,10 +485,12 @@ u32 mdecRead1(void) {
 }
 
 void psxDma0(u32 adr, u32 bcr, u32 chcr) {
-	int cmd = mdec.reg0;
+	u32 cmd = mdec.reg0, words_max = 0;
+	const void *mem;
 	int size;
 
 	if (chcr != 0x01000201) {
+		log_unhandled("mdec0: invalid dma %08x\n", chcr);
 		return;
 	}
 
@@ -484,9 +499,17 @@ void psxDma0(u32 adr, u32 bcr, u32 chcr) {
 
 	size = (bcr >> 16) * (bcr & 0xffff);
 
+	adr &= ~3;
+	mem = getDmaRam(adr, &words_max);
+	if (mem == INVALID_PTR || size > words_max) {
+		log_unhandled("bad dma0 madr %x\n", adr);
+		HW_DMA0_CHCR &= SWAP32(~0x01000000);
+		return;
+	}
+
 	switch (cmd >> 28) {
 		case 0x3: // decode 15/24bpp
-			mdec.rl = (u16 *) PSXM(adr);
+			mdec.rl = mem;
 			/* now the mdec is busy till all data are decoded */
 			mdec.reg1 |= MDEC1_BUSY;
 			/* detect the end of decoding */
@@ -506,7 +529,7 @@ void psxDma0(u32 adr, u32 bcr, u32 chcr) {
 
 		case 0x4: // quantization table upload
 			{
-				u8 *p = (u8 *)PSXM(adr);
+				const u8 *p = mem;
 				// printf("uploading new quantization table\n");
 				// printmatrixu8(p);
 				// printmatrixu8(p + 64);
@@ -524,7 +547,7 @@ void psxDma0(u32 adr, u32 bcr, u32 chcr) {
 			break;
 	}
 
-	MDECINDMA_INT(size);
+	set_event(PSXINT_MDECINDMA, size);
 }
 
 void mdec0Interrupt()
@@ -540,12 +563,15 @@ void mdec0Interrupt()
 #define SIZE_OF_16B_BLOCK (16*16*2)
 
 void psxDma1(u32 adr, u32 bcr, u32 chcr) {
+	u32 words, words_max = 0;
 	int blk[DSIZE2 * 6];
 	u8 * image;
 	int size;
-	u32 words;
 
-	if (chcr != 0x01000200) return;
+	if (chcr != 0x01000200) {
+		log_unhandled("mdec1: invalid dma %08x\n", chcr);
+		return;
+	}
 
 	words = (bcr >> 16) * (bcr & 0xffff);
 	/* size in byte */
@@ -557,9 +583,16 @@ void psxDma1(u32 adr, u32 bcr, u32 chcr) {
 		mdec.pending_dma1.bcr = bcr;
 		mdec.pending_dma1.chcr = chcr;
 		/* do not free the dma */
-	} else {
+		return;
+	}
 
-	image = (u8 *)PSXM(adr);
+	adr &= ~3;
+	image = getDmaRam(adr, &words_max);
+	if (image == INVALID_PTR || words > words_max) {
+		log_unhandled("bad dma1 madr %x\n", adr);
+		HW_DMA1_CHCR &= SWAP32(~0x01000000);
+		return;
+	}
 
 	if (mdec.reg0 & MDEC0_RGB24) {
 		/* 16 bits decoding
@@ -619,12 +652,13 @@ void psxDma1(u32 adr, u32 bcr, u32 chcr) {
 			mdec.block_buffer_pos = mdec.block_buffer + size;
 		}
 	}
+	if (size < 0)
+		log_unhandled("mdec: bork\n");
 	
-		/* define the power of mdec */
-		MDECOUTDMA_INT(words * MDEC_BIAS);
-		/* some CPU stalling */
-		psxRegs.cycle += words;
-	}
+	/* define the power of mdec */
+	set_event(PSXINT_MDECOUTDMA, words * MDEC_BIAS + MDEC_DELAY);
+	/* some CPU stalling */
+	psxRegs.cycle += words * MDEC_BIAS / 4;
 }
 
 void mdec1Interrupt() {
@@ -653,6 +687,7 @@ void mdec1Interrupt() {
 	 */
 
 	/* MDEC_END_OF_DATA avoids read outside memory */
+	//printf("mdec left %zd, v=%04x\n", mdec.rl_end - mdec.rl, *(mdec.rl));
 	if (mdec.rl >= mdec.rl_end || SWAP16(*(mdec.rl)) == MDEC_END_OF_DATA) {
 		mdec.reg1 &= ~(MDEC1_STP|MDEC1_BUSY);
 		if (HW_DMA0_CHCR & SWAP32(0x01000000))
@@ -670,27 +705,26 @@ void mdec1Interrupt() {
 }
 
 int mdecFreeze(void *f, int Mode) {
-	u8 *base = (u8 *)&psxM[0x100000];
+	u8 *base = (u8 *)psxM;
 	u32 v;
 
 	gzfreeze(&mdec.reg0, sizeof(mdec.reg0));
 	gzfreeze(&mdec.reg1, sizeof(mdec.reg1));
 
-	// old code used to save raw pointers..
 	v = (u8 *)mdec.rl - base;
 	gzfreeze(&v, sizeof(v));
-	mdec.rl = (u16 *)(base + (v & 0xffffe));
+	mdec.rl = (u16 *)(base + (v & 0x1ffffe));
 	v = (u8 *)mdec.rl_end - base;
 	gzfreeze(&v, sizeof(v));
-	mdec.rl_end = (u16 *)(base + (v & 0xffffe));
+	mdec.rl_end = (u16 *)(base + (v & 0x1ffffe));
 
 	v = 0;
 	if (mdec.block_buffer_pos)
-		v = mdec.block_buffer_pos - base;
+		v = mdec.block_buffer_pos - mdec.block_buffer;
 	gzfreeze(&v, sizeof(v));
 	mdec.block_buffer_pos = 0;
-	if (v)
-		mdec.block_buffer_pos = base + (v & 0xfffff);
+	if (v && v < sizeof(mdec.block_buffer))
+		mdec.block_buffer_pos = mdec.block_buffer;
 
 	gzfreeze(&mdec.block_buffer, sizeof(mdec.block_buffer));
 	gzfreeze(&mdec.pending_dma1, sizeof(mdec.pending_dma1));

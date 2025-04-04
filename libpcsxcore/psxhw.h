@@ -57,14 +57,14 @@ extern "C" {
 #define HW_DMA_PCR   (psxHu32ref(0x10f0))
 #define HW_DMA_ICR   (psxHu32ref(0x10f4))
 
-#define HW_DMA_ICR_BUS_ERROR     (1<<15)
-#define HW_DMA_ICR_GLOBAL_ENABLE (1<<23)
-#define HW_DMA_ICR_IRQ_SENT      (1<<31)
+#define HW_DMA_ICR_BUS_ERROR     (1u << 15)
+#define HW_DMA_ICR_GLOBAL_ENABLE (1u << 23)
+#define HW_DMA_ICR_IRQ_SENT      (1u << 31)
 
 #define DMA_INTERRUPT(n) { \
 	u32 icr = SWAPu32(HW_DMA_ICR); \
-	if (icr & (1 << (16 + n))) { \
-		icr |= 1 << (24 + n); \
+	if (icr & (1u << (16 + n))) { \
+		icr |= 1u << (24 + n); \
 		if (icr & HW_DMA_ICR_GLOBAL_ENABLE && !(icr & HW_DMA_ICR_IRQ_SENT)) { \
 			psxHu32ref(0x1070) |= SWAP32(8); \
 			icr |= HW_DMA_ICR_IRQ_SENT; \
@@ -77,10 +77,24 @@ void psxHwReset();
 u8 psxHwRead8(u32 add);
 u16 psxHwRead16(u32 add);
 u32 psxHwRead32(u32 add);
-void psxHwWrite8(u32 add, u8  value);
-void psxHwWrite16(u32 add, u16 value);
+void psxHwWrite8(u32 add, u32 value);
+void psxHwWrite16(u32 add, u32 value);
 void psxHwWrite32(u32 add, u32 value);
+u32 sio1ReadStat16(void);
 int psxHwFreeze(void *f, int Mode);
+
+void psxHwWriteIstat(u32 value);
+void psxHwWriteImask(u32 value);
+void psxHwWriteChcr0(u32 value);
+void psxHwWriteChcr1(u32 value);
+void psxHwWriteChcr2(u32 value);
+void psxHwWriteChcr3(u32 value);
+void psxHwWriteChcr4(u32 value);
+void psxHwWriteChcr6(u32 value);
+void psxHwWriteDmaPcr32(u32 value);
+void psxHwWriteDmaIcr32(u32 value);
+void psxHwWriteGpuSR(u32 value);
+u32  psxHwReadGpuSR(void);
 
 #ifdef __cplusplus
 }

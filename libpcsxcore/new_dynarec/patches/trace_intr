@@ -1,28 +1,37 @@
 diff --git a/libpcsxcore/new_dynarec/emu_if.c b/libpcsxcore/new_dynarec/emu_if.c
-index 10d99ba..1e097ae 100644
+index cefadd21..63a5c1b1 100644
 --- a/libpcsxcore/new_dynarec/emu_if.c
 +++ b/libpcsxcore/new_dynarec/emu_if.c
-@@ -405,13 +407,17 @@ static void ari64_shutdown()
- {
+@@ -5,6 +5,7 @@
+  * See the COPYING file in the top-level directory.
+  */
+ 
++#undef NDRC_THREAD
+ #include <stdio.h>
+ 
+ #include "emu_if.h"
+@@ -631,13 +632,18 @@ static void ari64_shutdown()
+ 	ari64_thread_shutdown();
  	new_dynarec_cleanup();
  	new_dyna_pcsx_mem_shutdown();
 +	(void)ari64_execute;
++	(void)ari64_execute_block;
  }
  
-+extern void intExecuteT();
-+extern void intExecuteBlockT();
++extern void intExecuteT(psxRegisters *regs);
++extern void intExecuteBlockT(psxRegisters *regs, enum blockExecCaller caller);
 +
  R3000Acpu psxRec = {
  	ari64_init,
  	ari64_reset,
 -	ari64_execute,
--	ari64_execute_until,
+-	ari64_execute_block,
 +	intExecuteT,
 +	intExecuteBlockT,
  	ari64_clear,
  	ari64_notify,
  	ari64_apply_config,
-@@ -481,7 +487,7 @@ static u32 memcheck_read(u32 a)
+@@ -699,7 +705,7 @@ static u32 memcheck_read(u32 a)
  	return *(u32 *)(psxM + (a & 0x1ffffc));
  }
  
@@ -32,23 +41,23 @@ index 10d99ba..1e097ae 100644
  {
  	static psxRegisters oldregs;
 diff --git a/libpcsxcore/new_dynarec/pcsxmem.c b/libpcsxcore/new_dynarec/pcsxmem.c
-index bb471b6..8f68a3b 100644
+index 98e2c6be..edba031e 100644
 --- a/libpcsxcore/new_dynarec/pcsxmem.c
 +++ b/libpcsxcore/new_dynarec/pcsxmem.c
-@@ -272,6 +272,8 @@ static void write_biu(u32 value)
- 	if (address != 0xfffe0130)
+@@ -238,6 +238,8 @@ static void write_biu(u32 value)
  		return;
+ 	}
  
 +extern u32 handler_cycle;
 +handler_cycle = psxRegs.cycle;
- 	switch (value) {
- 	case 0x800: case 0x804:
- 		unmap_ram_write();
+ 	memprintf("write_biu %08x @%08x %u\n", value, psxRegs.pc, psxRegs.cycle);
+ 	psxRegs.biuReg = value;
+ }
 diff --git a/libpcsxcore/psxcounters.c b/libpcsxcore/psxcounters.c
-index ff0efbc..4459644 100644
+index 064c06b6..07e2afb5 100644
 --- a/libpcsxcore/psxcounters.c
 +++ b/libpcsxcore/psxcounters.c
-@@ -379,9 +379,12 @@ void psxRcntUpdate()
+@@ -455,9 +455,12 @@ void psxRcntUpdate()
  
  /******************************************************************************/
  
@@ -61,7 +70,7 @@ index ff0efbc..4459644 100644
  
      _psxRcntWcount( index, value );
      psxRcntSet();
-@@ -390,6 +393,7 @@ void psxRcntWcount( u32 index, u32 value )
+@@ -466,6 +469,7 @@ void psxRcntWcount( u32 index, u32 value )
  void psxRcntWmode( u32 index, u32 value )
  {
      verboseLog( 1, "[RCNT %i] wmode: %x\n", index, value );
@@ -69,7 +78,7 @@ index ff0efbc..4459644 100644
  
      _psxRcntWmode( index, value );
      _psxRcntWcount( index, 0 );
-@@ -401,6 +405,7 @@ void psxRcntWmode( u32 index, u32 value )
+@@ -477,6 +481,7 @@ void psxRcntWmode( u32 index, u32 value )
  void psxRcntWtarget( u32 index, u32 value )
  {
      verboseLog( 1, "[RCNT %i] wtarget: %x\n", index, value );
@@ -77,151 +86,165 @@ index ff0efbc..4459644 100644
  
      rcnts[index].target = value;
  
-@@ -413,6 +418,7 @@ void psxRcntWtarget( u32 index, u32 value )
- u32 psxRcntRcount( u32 index )
+@@ -490,6 +495,7 @@ u32 psxRcntRcount0()
  {
+     u32 index = 0;
      u32 count;
 +handler_cycle = psxRegs.cycle;
  
-     count = _psxRcntRcount( index );
+     if ((rcnts[0].mode & 7) == (RcSyncModeEnable | Rc01UnblankReset) ||
+         (rcnts[0].mode & 7) == (RcSyncModeEnable | Rc01UnblankReset2))
+diff --git a/libpcsxcore/psxevents.c b/libpcsxcore/psxevents.c
+index 1e2d01f6..0ee15974 100644
+--- a/libpcsxcore/psxevents.c
++++ b/libpcsxcore/psxevents.c
+@@ -77,11 +77,13 @@ void irq_test(psxCP0Regs *cp0)
+ 		}
+ 	}
  
+-	cp0->n.Cause &= ~0x400;
++	u32 c2 = cp0->n.Cause & ~0x400;
+ 	if (psxHu32(0x1070) & psxHu32(0x1074))
+-		cp0->n.Cause |= 0x400;
+-	if (((cp0->n.Cause | 1) & cp0->n.SR & 0x401) == 0x401)
++		c2 |= 0x400;
++	if (((c2 | 1) & cp0->n.SR & 0x401) == 0x401) {
++		cp0->n.Cause = c2;
+ 		psxException(0, 0, cp0);
++	}
+ }
+ 
+ void gen_interupt(psxCP0Regs *cp0)
 diff --git a/libpcsxcore/psxhw.c b/libpcsxcore/psxhw.c
-index dbcb989..0716f5e 100644
+index c487b02d..171c447f 100644
 --- a/libpcsxcore/psxhw.c
 +++ b/libpcsxcore/psxhw.c
-@@ -373,13 +373,14 @@ void psxHwWrite8(u32 add, u8 value) {
- 		case 0x1f801803: cdrWrite3(value); break;
- 
- 		default:
-+			if (add < 0x1f802000)
- 			psxHu8(add) = value;
- #ifdef PSXHW_LOG
- 			PSXHW_LOG("*Unknown 8bit write at address %x value %x\n", add, value);
- #endif
- 			return;
+@@ -323,6 +323,7 @@ void psxHwWrite8(u32 add, u32 value) {
+ 			log_unhandled("unhandled w8  %08x %08x @%08x\n",
+ 				add, value, psxRegs.pc);
  	}
--	psxHu8(add) = value;
-+	//psxHu8(add) = value;
- #ifdef PSXHW_LOG
- 	PSXHW_LOG("*Known 8bit write at address %x value %x\n", add, value);
- #endif
-@@ -504,6 +505,7 @@ void psxHwWrite16(u32 add, u16 value) {
- 				return;
- 			}
++	if (add < 0x1f802000)
+ 	psxHu8(add) = value;
+ }
  
-+			if (add < 0x1f802000)
- 			psxHu16ref(add) = SWAPu16(value);
- #ifdef PSXHW_LOG
- 			PSXHW_LOG("*Unknown 16bit write at address %x value %x\n", add, value);
-@@ -699,9 +701,9 @@ void psxHwWrite32(u32 add, u32 value) {
+@@ -396,6 +397,7 @@ void psxHwWrite16(u32 add, u32 value) {
+ 			log_unhandled("unhandled w16 %08x %08x @%08x\n",
+ 				add, value, psxRegs.pc);
+ 	}
++	if (add < 0x1f802000)
+ 	psxHu16ref(add) = SWAPu16(value);
+ }
+ 
+@@ -452,6 +454,7 @@ void psxHwWrite32(u32 add, u32 value) {
  			return;
+ 		}
+ 	}
++	if (add < 0x1f802000)
+ 	psxHu32ref(add) = SWAPu32(value);
+ }
  
- 		case 0x1f801820:
--			mdecWrite0(value); break;
-+			mdecWrite0(value); return;
- 		case 0x1f801824:
--			mdecWrite1(value); break;
-+			mdecWrite1(value); return;
- 
- 		case 0x1f801100:
- #ifdef PSXHW_LOG
-@@ -759,6 +761,7 @@ void psxHwWrite32(u32 add, u32 value) {
- 				return;
- 			}
- 
-+			if (add < 0x1f802000)
- 			psxHu32ref(add) = SWAPu32(value);
- #ifdef PSXHW_LOG
- 			PSXHW_LOG("*Unknown 32bit write at address %x value %x\n", add, value);
 diff --git a/libpcsxcore/psxinterpreter.c b/libpcsxcore/psxinterpreter.c
-index e7e3269..8f4004d 100644
+index 68d79321..2e3d14ab 100644
 --- a/libpcsxcore/psxinterpreter.c
 +++ b/libpcsxcore/psxinterpreter.c
-@@ -467,6 +467,8 @@ static void doBranch(u32 tar) {
- 	psxRegs.pc += 4;
- 	psxRegs.cycle += BIAS;
+@@ -243,7 +243,7 @@ static inline void addCycle(psxRegisters *regs)
+ {
+ 	assert(regs->subCycleStep >= 0x10000);
+ 	regs->subCycle += regs->subCycleStep;
+-	regs->cycle += regs->subCycle >> 16;
++	regs->cycle += 2; //regs->subCycle >> 16;
+ 	regs->subCycle &= 0xffff;
+ }
  
-+	(void)tmp;
-+#if 0
- 	// check for load delay
- 	tmp = psxRegs.code >> 26;
- 	switch (tmp) {
-@@ -500,13 +502,15 @@ static void doBranch(u32 tar) {
- 			}
- 			break;
- 	}
--
-+#endif
- 	psxBSC[psxRegs.code >> 26]();
+@@ -440,7 +440,9 @@ static void doBranch(psxRegisters *regs, u32 tar, enum R3000Abdt taken) {
+ 		regs->CP0.n.Target = pc_final;
+ 	regs->branching = 0;
  
- 	branch = 0;
- 	psxRegs.pc = branchPC;
- 
-+	psxRegs.cycle += BIAS;
++	psxRegs.cycle += 2;
  	psxBranchTest();
-+	psxRegs.cycle -= BIAS;
++	psxRegs.cycle -= 2;
  }
  
- /*********************************************************
-@@ -616,12 +620,13 @@ void psxMULTU_stall() {
- 	psxMULTU();
- }
- 
-+#define doBranchNotTaken() do { psxRegs.cycle += BIAS; execI(); psxBranchTest(); psxRegs.cycle -= BIAS; } while(0)
- /*********************************************************
- * Register branch logic                                  *
- * Format:  OP rs, offset                                 *
- *********************************************************/
--#define RepZBranchi32(op)      if(_i32(_rRs_) op 0) doBranch(_BranchTarget_);
--#define RepZBranchLinki32(op)  { _SetLink(31); if(_i32(_rRs_) op 0) { doBranch(_BranchTarget_); } }
-+#define RepZBranchi32(op)      if(_i32(_rRs_) op 0) doBranch(_BranchTarget_); else doBranchNotTaken();
-+#define RepZBranchLinki32(op)  { _SetLink(31); if(_i32(_rRs_) op 0) { doBranch(_BranchTarget_); } else doBranchNotTaken(); }
- 
- void psxBGEZ()   { RepZBranchi32(>=) }      // Branch if Rs >= 0
- void psxBGEZAL() { RepZBranchLinki32(>=) }  // Branch if Rs >= 0 and link
-@@ -703,7 +708,7 @@ void psxRFE() {
- * Register branch logic                                  *
- * Format:  OP rs, rt, offset                             *
- *********************************************************/
--#define RepBranchi32(op)      if(_i32(_rRs_) op _i32(_rRt_)) doBranch(_BranchTarget_);
-+#define RepBranchi32(op)      if(_i32(_rRs_) op _i32(_rRt_)) doBranch(_BranchTarget_); else doBranchNotTaken();
- 
- void psxBEQ() {	RepBranchi32(==) }  // Branch if Rs == Rt
- void psxBNE() {	RepBranchi32(!=) }  // Branch if Rs != Rt
-@@ -901,7 +907,7 @@ void MTC0(int reg, u32 val) {
+ static void doBranchReg(psxRegisters *regs, u32 tar) {
+@@ -973,7 +975,7 @@ void MTC0(psxRegisters *regs_, int reg, u32 val) {
  	}
  }
  
--void psxMTC0() { MTC0(_Rd_, _u32(_rRt_)); }
-+void psxMTC0() { MTC0(_Rd_, _u32(_rRt_)); psxBranchTest(); }
- void psxCTC0() { MTC0(_Rd_, _u32(_rRt_)); }
+-OP(psxMTC0) { MTC0(regs_, _Rd_, _u32(_rRt_)); }
++OP(psxMTC0) { MTC0(regs_, _Rd_, _u32(_rRt_)); psxBranchTest(); }
  
- /*********************************************************
-@@ -1028,6 +1034,23 @@ void intExecuteBlock() {
- 	while (!branch2) execI();
+ // no exception
+ static inline void psxNULLne(psxRegisters *regs) {
+@@ -1182,18 +1184,20 @@ static void intReset() {
+ static inline void execI_(u8 **memRLUT, psxRegisters *regs) {
+ 	u32 pc = regs->pc;
+ 
+-	addCycle(regs);
++	//addCycle(regs);
+ 	dloadStep(regs);
+ 
+ 	regs->pc += 4;
+ 	regs->code = fetch(regs, memRLUT, pc);
+ 	psxBSC[regs->code >> 26](regs, regs->code);
++	psxRegs.cycle += 2;
++	fetchNoCache(regs, memRLUT, regs->pc); // bus err check
+ }
+ 
+ static inline void execIbp(u8 **memRLUT, psxRegisters *regs) {
+ 	u32 pc = regs->pc;
+ 
+-	addCycle(regs);
++	//addCycle(regs);
+ 	dloadStep(regs);
+ 
+ 	if (execBreakCheck(regs, pc))
+@@ -1202,6 +1206,8 @@ static inline void execIbp(u8 **memRLUT, psxRegisters *regs) {
+ 	regs->pc += 4;
+ 	regs->code = fetch(regs, memRLUT, pc);
+ 	psxBSC[regs->code >> 26](regs, regs->code);
++	psxRegs.cycle += 2;
++	fetchNoCache(regs, memRLUT, regs->pc); // bus err check
+ }
+ 
+ static void intExecute(psxRegisters *regs) {
+@@ -1234,6 +1240,27 @@ static void intExecuteBlockBp(psxRegisters *regs, enum blockExecCaller caller) {
+ 		execIbp(memRLUT, regs);
  }
  
 +extern void do_insn_trace(void);
 +
-+void intExecuteT() {
-+	for (;;) {
++void intExecuteT(psxRegisters *regs) {
++	u8 **memRLUT = psxMemRLUT;
++
++	while (!regs->stop) {
 +		do_insn_trace();
-+		execI();
++		execIbp(memRLUT, regs);
 +	}
 +}
 +
-+void intExecuteBlockT() {
-+	branch2 = 0;
-+	while (!branch2) {
++void intExecuteBlockT(psxRegisters *regs, enum blockExecCaller caller) {
++	u8 **memRLUT = psxMemRLUT;
++
++	regs->branchSeen = 0;
++	while (!regs->branchSeen) {
 +		do_insn_trace();
-+		execI();
++		execIbp(memRLUT, regs);
 +	}
 +}
 +
  static void intClear(u32 Addr, u32 Size) {
  }
  
-@@ -1050,7 +1073,7 @@ void intApplyConfig() {
+@@ -1263,7 +1290,7 @@ static void setupCop(u32 sr)
+ 	else
+ 		psxBSC[17] = psxCOPd;
+ 	if (sr & (1u << 30))
+-		psxBSC[18] = Config.DisableStalls ? psxCOP2 : psxCOP2_stall;
++		psxBSC[18] = psxCOP2;
+ 	else
+ 		psxBSC[18] = psxCOPd;
+ 	if (sr & (1u << 31))
+@@ -1282,7 +1309,7 @@ void intApplyConfig() {
  	assert(psxSPC[26] == psxDIV   || psxSPC[26] == psxDIV_stall);
  	assert(psxSPC[27] == psxDIVU  || psxSPC[27] == psxDIVU_stall);
  
@@ -230,28 +253,16 @@ index e7e3269..8f4004d 100644
  		psxBSC[18] = psxCOP2;
  		psxBSC[50] = gteLWC2;
  		psxBSC[58] = gteSWC2;
-@@ -1092,9 +1115,10 @@ void execI() {
- 	if (Config.Debug) ProcessDebug();
- 
- 	psxRegs.pc += 4;
--	psxRegs.cycle += BIAS;
- 
- 	psxBSC[psxRegs.code >> 26]();
-+
-+	psxRegs.cycle += BIAS;
- }
- 
- R3000Acpu psxInt = {
 diff --git a/libpcsxcore/psxmem.c b/libpcsxcore/psxmem.c
-index 46cee0c..c814587 100644
+index 13301992..2ccdea74 100644
 --- a/libpcsxcore/psxmem.c
 +++ b/libpcsxcore/psxmem.c
-@@ -218,11 +218,13 @@ void psxMemShutdown() {
+@@ -316,10 +316,13 @@ void psxMemOnIsolate(int enable)
+ 			: R3000ACPU_NOTIFY_CACHE_UNISOLATED, NULL);
  }
  
- static int writeok = 1;
 +extern u32 last_io_addr;
- 
++
  u8 psxMemRead8(u32 mem) {
  	char *p;
  	u32 t;
@@ -260,7 +271,7 @@ index 46cee0c..c814587 100644
  	t = mem >> 16;
  	if (t == 0x1f80 || t == 0x9f80 || t == 0xbf80) {
  		if ((mem & 0xffff) < 0x400)
-@@ -248,6 +250,7 @@ u16 psxMemRead16(u32 mem) {
+@@ -345,6 +348,7 @@ u16 psxMemRead16(u32 mem) {
  	char *p;
  	u32 t;
  
@@ -268,7 +279,7 @@ index 46cee0c..c814587 100644
  	t = mem >> 16;
  	if (t == 0x1f80 || t == 0x9f80 || t == 0xbf80) {
  		if ((mem & 0xffff) < 0x400)
-@@ -273,6 +276,7 @@ u32 psxMemRead32(u32 mem) {
+@@ -370,6 +374,7 @@ u32 psxMemRead32(u32 mem) {
  	char *p;
  	u32 t;
  
@@ -276,7 +287,7 @@ index 46cee0c..c814587 100644
  	t = mem >> 16;
  	if (t == 0x1f80 || t == 0x9f80 || t == 0xbf80) {
  		if ((mem & 0xffff) < 0x400)
-@@ -298,6 +302,7 @@ void psxMemWrite8(u32 mem, u8 value) {
+@@ -397,6 +402,7 @@ void psxMemWrite8(u32 mem, u32 value) {
  	char *p;
  	u32 t;
  
@@ -284,7 +295,7 @@ index 46cee0c..c814587 100644
  	t = mem >> 16;
  	if (t == 0x1f80 || t == 0x9f80 || t == 0xbf80) {
  		if ((mem & 0xffff) < 0x400)
-@@ -325,6 +330,7 @@ void psxMemWrite16(u32 mem, u16 value) {
+@@ -424,6 +430,7 @@ void psxMemWrite16(u32 mem, u32 value) {
  	char *p;
  	u32 t;
  
@@ -292,7 +303,7 @@ index 46cee0c..c814587 100644
  	t = mem >> 16;
  	if (t == 0x1f80 || t == 0x9f80 || t == 0xbf80) {
  		if ((mem & 0xffff) < 0x400)
-@@ -352,6 +358,7 @@ void psxMemWrite32(u32 mem, u32 value) {
+@@ -451,6 +458,7 @@ void psxMemWrite32(u32 mem, u32 value) {
  	char *p;
  	u32 t;
  
@@ -300,25 +311,25 @@ index 46cee0c..c814587 100644
  //	if ((mem&0x1fffff) == 0x71E18 || value == 0x48088800) SysPrintf("t2fix!!\n");
  	t = mem >> 16;
  	if (t == 0x1f80 || t == 0x9f80 || t == 0xbf80) {
-@@ -381,6 +388,8 @@ void psxMemWrite32(u32 mem, u32 value) {
- 			} else {
- 				int i;
- 
+@@ -469,6 +477,8 @@ void psxMemWrite32(u32 mem, u32 value) {
+ #endif
+ 		} else {
+ 			if (mem == 0xfffe0130) {
 +extern u32 handler_cycle;
 +handler_cycle = psxRegs.cycle;
- 				switch (value) {
- 					case 0x800: case 0x804:
- 						if (writeok == 0) break;
+ 				psxRegs.biuReg = value;
+ 				return;
+ 			}
 diff --git a/libpcsxcore/r3000a.c b/libpcsxcore/r3000a.c
-index 7e6f16b..0114947 100644
+index cfd1ab09..724167e0 100644
 --- a/libpcsxcore/r3000a.c
 +++ b/libpcsxcore/r3000a.c
-@@ -120,6 +120,8 @@ void psxException(u32 code, u32 bd) {
+@@ -141,6 +141,8 @@ void psxException(u32 cause, enum R3000Abdt bdt, psxCP0Regs *cp0) {
  }
  
  void psxBranchTest() {
 + extern u32 irq_test_cycle;
 + irq_test_cycle = psxRegs.cycle;
- 	if ((psxRegs.cycle - psxNextsCounter) >= psxNextCounter)
+ 	if ((psxRegs.cycle - psxRegs.psxNextsCounter) >= psxRegs.psxNextCounter)
  		psxRcntUpdate();
  

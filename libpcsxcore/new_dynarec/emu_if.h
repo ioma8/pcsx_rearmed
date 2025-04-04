@@ -1,24 +1,7 @@
 #include "new_dynarec.h"
 #include "../r3000a.h"
 
-extern char invalid_code[0x100000];
-
-/* weird stuff */
-#define EAX 0
-#define ECX 1
-
 extern int dynarec_local[];
-
-/* same as psxRegs.GPR.n.* */
-extern int hi, lo;
-
-/* same as psxRegs.CP0.n.* */
-extern int reg_cop0[];
-#define Status   psxRegs.CP0.n.Status
-#define Cause    psxRegs.CP0.n.Cause
-#define EPC      psxRegs.CP0.n.EPC
-#define BadVAddr psxRegs.CP0.n.BadVAddr
-#define Count    psxRegs.cycle // psxRegs.CP0.n.Count
 
 /* COP2/GTE */
 enum gte_opcodes {
@@ -46,7 +29,6 @@ enum gte_opcodes {
 	GTE_NCCT	= 0x3f,
 };
 
-extern int reg_cop2d[], reg_cop2c[];
 extern void *gte_handlers[64];
 extern void *gte_handlers_nf[64];
 extern const char *gte_regnames[64];
@@ -85,13 +67,12 @@ extern u32 inv_code_start, inv_code_end;
 
 /* cycles/irqs */
 extern u32 next_interupt;
-extern int pending_exception;
 
 /* called by drc */
-void pcsx_mtc0(u32 reg, u32 val);
-void pcsx_mtc0_ds(u32 reg, u32 val);
+struct psxRegisters;
+void pcsx_mtc0(struct psxRegisters *regs, u32 reg, u32 val);
+void pcsx_mtc0_ds(struct psxRegisters *regs, u32 reg, u32 val);
 
 /* misc */
 extern void SysPrintf(const char *fmt, ...);
 
-#define rdram ((u_char *)psxM)
