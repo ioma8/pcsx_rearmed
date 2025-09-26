@@ -26,6 +26,7 @@ jobs:
       uses: actions/checkout@v4
       with:
         submodules: true
+        fetch-depth: 0
         
     - name: Install build dependencies
       run: |
@@ -34,7 +35,7 @@ jobs:
         
     - name: Configure
       run: |
-        ./configure
+        DUMP_CONFIG_LOG=1 ./configure
         
     - name: Build
       run: |
@@ -44,18 +45,28 @@ jobs:
       run: |
         make rel
         
-    - name: Get version info
+    - name: Get version and package info
       id: version
       run: |
         VERSION=$(git describe --always --tags HEAD)
         echo "version=$VERSION" >> $GITHUB_OUTPUT
-        echo "archive_name=pcsx_rearmed_${VERSION}.zip" >> $GITHUB_OUTPUT
+        
+        # Find the generated package
+        PACKAGE=$(ls pcsx_rearmed_*.zip | head -1)
+        NEW_PACKAGE="pcsx_rearmed_${VERSION}_linux-x86_64.zip"
+        
+        # Rename to include platform info
+        if [ "$PACKAGE" != "$NEW_PACKAGE" ]; then
+          mv "$PACKAGE" "$NEW_PACKAGE"
+        fi
+        
+        echo "package=$NEW_PACKAGE" >> $GITHUB_OUTPUT
         
     - name: Upload build artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: pcsx-rearmed-linux-${{ steps.version.outputs.version }}
-        path: pcsx_rearmed_*.zip
+        name: pcsx-rearmed-linux-x86_64-${{ steps.version.outputs.version }}
+        path: ${{ steps.version.outputs.package }}
         retention-days: 30
         
     - name: Create Release
@@ -66,33 +77,50 @@ jobs:
         prerelease: ${{ inputs.prerelease }}
         generate_release_notes: true
         files: |
-          pcsx_rearmed_*.zip
+          ${{ steps.version.outputs.package }}
         body: |
-          ## PCSX ReARMed Linux Build
+          ## PCSX ReARMed Release
           
-          This release contains a pre-built Linux version of PCSX ReARMed.
+          This release contains a pre-built Linux x86_64 version of PCSX ReARMed.
           
           **Version:** ${{ steps.version.outputs.version }}
+          **Built from commit:** ${{ github.sha }}
           
           ### Contents:
           - `pcsx` - Main executable
-          - `plugins/` - GPU and SPU plugins
+          - `plugins/` - GPU and SPU plugins (GPU NEON, GPU P.E.Op.S., GPU Unai, GPU OpenGL ES)
+          - `spunull.so` - Null SPU plugin
           - `bios/` - BIOS directory (add your own BIOS files here)
           - `skin/` - UI skin files
-          - Documentation files
+          - Documentation files (`readme.txt`, `COPYING`)
           
-          ### Requirements:
-          - Linux x86_64
-          - SDL 1.2
-          - ALSA/PulseAudio for audio
-          - OpenGL ES for GPU acceleration (optional)
+          ### System Requirements:
+          - Linux x86_64 (Intel/AMD 64-bit)
+          - SDL 1.2 library (`libsdl1.2debian` package on Ubuntu/Debian)
+          - ALSA/PulseAudio for audio (`libasound2` or `pulseaudio` packages)
+          - Optional: OpenGL ES for GPU acceleration
           
           ### Installation:
-          1. Extract the zip file
-          2. Run `./pcsx` from the extracted directory
-          3. Place your PlayStation BIOS file in the `bios/` directory
-          4. Use the menu to load and play games
+          1. Download and extract the zip file
+          2. Install dependencies: `sudo apt-get install libsdl1.2debian libasound2-dev`
+          3. Run `./pcsx` from the extracted directory
+          4. Place your PlayStation BIOS file in the `bios/` directory
+          5. Use the menu to load and play games
           
-          Built from commit: ${{ github.sha }}
+          ### Features:
+          - ARM-optimized MIPS->x86_64 recompiler for high performance
+          - Multiple GPU plugins for compatibility and performance
+          - NEON-optimized graphics rendering
+          - Save state support
+          - Memory card support
+          - CD image format support (.bin/.cue, .iso, .pbp, .cbn)
+          - CHD format support
+          
+          ### Notes:
+          - This build uses the Lightrec dynamic recompiler for optimal performance
+          - GPU NEON plugin is included for high-performance graphics
+          - For ARM devices (Raspberry Pi, etc.), check the existing CI builds or compile from source
+          
+          For more information, see the [repository README](https://github.com/ioma8/pcsx_rearmed/blob/master/README.md).
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
