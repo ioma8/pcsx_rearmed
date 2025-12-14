@@ -285,11 +285,11 @@ const unsigned char gte_cycletab[64] = {
 };
 
 // warning: ari64 drc stores it's negative cycles in gteBusyCycle
-static int gteCheckStallRaw(u32 op_cycles, psxRegisters *regs) {
+static always_inline hot_function int gteCheckStallRaw(u32 op_cycles, psxRegisters *restrict regs) {
 	u32 left = regs->gteBusyCycle - regs->cycle;
 	int stall = 0;
 
-	if (left <= 44) {
+	if (unlikely(left <= 44)) {
 		//printf("c %2u stall %2u %u\n", op_cycles, left, regs->cycle);
 		regs->cycle = regs->gteBusyCycle;
 		stall = left;
@@ -302,7 +302,7 @@ void gteCheckStall(u32 op) {
 	gteCheckStallRaw(gte_cycletab[op], &psxRegs);
 }
 
-u32 MFC2(struct psxCP2Regs *regs, int reg) {
+hot_function u32 MFC2(struct psxCP2Regs *restrict regs, int reg) {
 	switch (reg) {
 		case 1:
 		case 3:
@@ -336,7 +336,7 @@ u32 MFC2(struct psxCP2Regs *regs, int reg) {
 	return regs->CP2D.r[reg];
 }
 
-static u32 lzc(s32 val)
+static always_inline pure_function u32 lzc(s32 val)
 {
 #if __has_builtin(__builtin_clrsb)
 	return 1 + __builtin_clrsb(val);
@@ -346,7 +346,7 @@ static u32 lzc(s32 val)
 #endif
 }
 
-void MTC2(struct psxCP2Regs *regs, u32 value, int reg) {
+hot_function void MTC2(struct psxCP2Regs *restrict regs, u32 value, int reg) {
 	switch (reg) {
 		case 15:
 			gteSXY0 = gteSXY1;
