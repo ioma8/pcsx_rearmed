@@ -87,7 +87,7 @@ make_dma_func(3,)
 make_dma_func(4,)
 make_dma_func(6,)
 
-void psxHwWriteDmaPcr32(u32 value)
+hot_function void psxHwWriteDmaPcr32(u32 value)
 {
 	// todo: can this also pause/stop live dma?
 	u32 on = (SWAPu32(HW_DMA_PCR) ^ value) & value & 0x08888888;
@@ -97,14 +97,14 @@ void psxHwWriteDmaPcr32(u32 value)
 		return;
 	#define DO(n) \
 	chcr = SWAPu32(HW_DMA##n##_CHCR); \
-	if ((on & (8u << 4*n)) && (chcr & 0x01000000)) \
+	if (unlikely((on & (8u << 4*n)) && (chcr & 0x01000000))) \
 		psxDma##n(SWAPu32(HW_DMA##n##_MADR), SWAPu32(HW_DMA##n##_BCR), chcr)
 	DO(0);
 	DO(1);
 	// breaks Kyuutenkai. Probably needs better timing or
 	// proper gpu side dma enable handling
 	//DO(2);
-	if ((on & (8u << 4*2)) && (SWAPu32(HW_DMA2_CHCR) & 0x01000000))
+	if (unlikely((on & (8u << 4*2)) && (SWAPu32(HW_DMA2_CHCR) & 0x01000000)))
 		log_unhandled("dma2 pcr write ignored\n");
 	DO(3);
 	DO(4);
@@ -112,12 +112,12 @@ void psxHwWriteDmaPcr32(u32 value)
 	#undef DO
 }
 
-void psxHwWriteDmaIcr32(u32 value)
+hot_function void psxHwWriteDmaIcr32(u32 value)
 {
 	u32 tmp = value & 0x00ff803f;
 	tmp |= (SWAPu32(HW_DMA_ICR) & ~value) & 0x7f000000;
-	if ((tmp & HW_DMA_ICR_GLOBAL_ENABLE && tmp & 0x7f000000)
-	    || tmp & HW_DMA_ICR_BUS_ERROR) {
+	if (unlikely((tmp & HW_DMA_ICR_GLOBAL_ENABLE && tmp & 0x7f000000)
+	    || tmp & HW_DMA_ICR_BUS_ERROR)) {
 		if (!(SWAPu32(HW_DMA_ICR) & HW_DMA_ICR_IRQ_SENT))
 			psxHu32ref(0x1070) |= SWAP32(8);
 		tmp |= HW_DMA_ICR_IRQ_SENT;
