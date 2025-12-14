@@ -465,7 +465,7 @@ hot_function void psxMemWrite32(u32 mem, u32 value) {
 		if (likely(p != INVALID_PTR)) {
 			if (unlikely(Config.Debug))
 				DebugCheckBP((mem & 0xffffff) | 0x80000000, W4);
-			preload(p, 0, 1);
+			preload(p, 1, 0);
 			*(u32 *)p = SWAPu32(value);
 #ifndef DRC_DISABLE
 			psxCpu->Clear(mem, 1);

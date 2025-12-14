@@ -63,7 +63,7 @@ hot_function void psxDma4(u32 madr, u32 bcr, u32 chcr) { // SPU
 			PSXDMA_LOG("*** DMA4 SPU - mem2spu *** %x addr = %x size = %x\n", chcr, madr, bcr);
 			if (unlikely(ptr == INVALID_PTR))
 				break;
-			preload(ptr, 1, 0);
+			preload(ptr, 0, 0);
 			SPU_writeDMAMem(ptr, words_copy * 2, psxRegs.cycle);
 			HW_DMA4_MADR = SWAPu32(madr + words_copy * 2);
 			// This should be much slower, like 12+ cycles/byte, it's like
@@ -76,7 +76,7 @@ hot_function void psxDma4(u32 madr, u32 bcr, u32 chcr) { // SPU
 			PSXDMA_LOG("*** DMA4 SPU - spu2mem *** %x addr = %x size = %x\n", chcr, madr, bcr);
 			if (unlikely(ptr == INVALID_PTR))
 				break;
-			preload(ptr, 1, 1);
+			preload(ptr, 1, 0);
 			SPU_readDMAMem(ptr, words_copy * 2, psxRegs.cycle);
 			psxCpu->Clear(madr, words_copy);
 
