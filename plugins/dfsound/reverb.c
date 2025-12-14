@@ -149,7 +149,7 @@ static void MixREVERB(int *SSumLR, int *RVB, int ns_to, int curr_addr,
    Rout = vCOMB1 * g_buffer(rvb->mRCOMB1) + vCOMB2 * g_buffer(rvb->mRCOMB2)
         + vCOMB3 * g_buffer(rvb->mRCOMB3) + vCOMB4 * g_buffer(rvb->mRCOMB4);
 
-   preload(SSumLR + ns + 64*2/4 - 4);
+   preload(SSumLR + ns + 64*2/4 - 4, 0, 0);
 
    Lout -= vAPF1 * g_buffer(rvb->mLAPF1_dAPF1); Lout >>= (15-1);
    Rout -= vAPF1 * g_buffer(rvb->mRAPF1_dAPF1); Rout >>= (15-1);
@@ -158,7 +158,7 @@ static void MixREVERB(int *SSumLR, int *RVB, int ns_to, int curr_addr,
    Lout = Lout * vAPF1 + (g_buffer(rvb->mLAPF1_dAPF1) << (15-1));
    Rout = Rout * vAPF1 + (g_buffer(rvb->mRAPF1_dAPF1) << (15-1));
 
-   preload(RVB + ns + 64*2/4 - 4);
+   preload(RVB + ns + 64*2/4 - 4, 0, 0);
 
    Lout -= vAPF2 * g_buffer(rvb->mLAPF2_dAPF2); Lout >>= (15-1);
    Rout -= vAPF2 * g_buffer(rvb->mRAPF2_dAPF2); Rout >>= (15-1);
@@ -198,7 +198,7 @@ static void MixREVERB_off(int *SSumLR, int ns_to, int curr_addr)
    int rapf1 = g_buffer(rvb->mRAPF1_dAPF1);
    int lapf2 = g_buffer(rvb->mLAPF2_dAPF2);
    int rapf2 = g_buffer(rvb->mRAPF2_dAPF2);
-   preload(SSumLR + ns + 64*2/4 - 4);
+   preload(SSumLR + ns + 64*2/4 - 4, 0, 0);
 
    Lout = Rout = 0; // but should be COMB?
 
@@ -228,7 +228,7 @@ static void MixREVERB_off(int *SSumLR, int ns_to, int curr_addr)
  {
   for (ns = 0; ns < ns_to * 2; )
   {
-   preload(SSumLR + ns + 64*2/4 - 4);
+   preload(SSumLR + ns + 64*2/4 - 4, 0, 0);
 
    Lout = g_buffer(rvb->mLAPF2_dAPF2);
    Rout = g_buffer(rvb->mRAPF2_dAPF2);

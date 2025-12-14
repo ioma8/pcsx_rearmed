@@ -9,7 +9,7 @@
 #  define noinline       __attribute__((noinline,noclone))
 # endif
 # define attr_unused     __attribute__((unused))
-# define always_inline   __attribute__((always_inline)) inline
+# define force_inline    __attribute__((always_inline)) inline
 # define hot_function    __attribute__((hot))
 # define cold_function   __attribute__((cold))
 # define pure_function   __attribute__((pure))
@@ -21,7 +21,7 @@
 # define preload(addr, rw, locality) ((void)0)
 # define noinline
 # define attr_unused
-# define always_inline   inline
+# define force_inline    inline
 # define hot_function
 # define cold_function
 # define pure_function

@@ -50,7 +50,7 @@ static void (INT_ATTR *psxBSC[64])(psxRegisters *regs_, u32 code);
 static void (INT_ATTR *psxSPC[64])(psxRegisters *regs_, u32 code);
 
 // load delay
-static always_inline hot_function void doLoad(psxRegisters *restrict regs, u32 r, u32 val)
+static force_inline hot_function void doLoad(psxRegisters *restrict regs, u32 r, u32 val)
 {
 #ifdef HANDLE_LOAD_DELAY
 	int sel = regs->dloadSel ^ 1;
@@ -64,7 +64,7 @@ static always_inline hot_function void doLoad(psxRegisters *restrict regs, u32 r
 #endif
 }
 
-static always_inline hot_function void dloadRt(psxRegisters *restrict regs, u32 r, u32 val)
+static force_inline hot_function void dloadRt(psxRegisters *restrict regs, u32 r, u32 val)
 {
 #ifdef HANDLE_LOAD_DELAY
 	int sel = regs->dloadSel;
@@ -74,7 +74,7 @@ static always_inline hot_function void dloadRt(psxRegisters *restrict regs, u32 
 	regs->GPR.r[r] = likely(r) ? val : 0;
 }
 
-static always_inline hot_function void dloadStep(psxRegisters *restrict regs)
+static force_inline hot_function void dloadStep(psxRegisters *restrict regs)
 {
 #ifdef HANDLE_LOAD_DELAY
 	int sel = regs->dloadSel;
@@ -85,7 +85,7 @@ static always_inline hot_function void dloadStep(psxRegisters *restrict regs)
 #endif
 }
 
-static always_inline void dloadFlush(psxRegisters *restrict regs)
+static force_inline void dloadFlush(psxRegisters *restrict regs)
 {
 #ifdef HANDLE_LOAD_DELAY
 	regs->GPR.r[regs->dloadReg[0]] = regs->dloadVal[0];
@@ -96,7 +96,7 @@ static always_inline void dloadFlush(psxRegisters *restrict regs)
 #endif
 }
 
-static always_inline void dloadClear(psxRegisters *restrict regs)
+static force_inline void dloadClear(psxRegisters *restrict regs)
 {
 #ifdef HANDLE_LOAD_DELAY
 	regs->dloadVal[0] = regs->dloadVal[1] = 0;
@@ -739,7 +739,7 @@ OP(psxJALRe) {
 	 (0xc0000000u <= (a) && (a) < 0xfffe0000u))
 
 // exception checking order is important
-static always_inline hot_function int checkLD(psxRegisters *restrict regs, u32 addr, u32 m) {
+static force_inline hot_function int checkLD(psxRegisters *restrict regs, u32 addr, u32 m) {
 	int bpException = 0;
 	if (unlikely(DBR_EN_LD(regs->CP0.n.DCIC, addr) &&
 	    ((addr ^ regs->CP0.n.BDA) & regs->CP0.n.BDAM) == 0)) {
@@ -764,7 +764,7 @@ static always_inline hot_function int checkLD(psxRegisters *restrict regs, u32 a
 	return 1;
 }
 
-static always_inline hot_function int checkST(psxRegisters *restrict regs, u32 addr, u32 m) {
+static force_inline hot_function int checkST(psxRegisters *restrict regs, u32 addr, u32 m) {
 	int bpException = 0;
 	if (unlikely(DBR_EN_ST(regs->CP0.n.DCIC, addr) &&
 	    ((addr ^ regs->CP0.n.BDA) & regs->CP0.n.BDAM) == 0)) {

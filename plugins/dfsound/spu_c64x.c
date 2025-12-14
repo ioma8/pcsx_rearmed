@@ -159,8 +159,8 @@ static void thread_work_wait_sync(struct work_item *work, int force)
 
  ns_to = work->ns_to;
  f.dsp_cache_inv_virt(work->SSumLR, sizeof(work->SSumLR[0]) * 2 * ns_to);
- preload(work->SSumLR);
- preload(work->SSumLR + 64/4);
+ preload(work->SSumLR, 0, 0);
+ preload(work->SSumLR + 64/4, 0, 0);
 
  f.stale_caches = 1; // sb, spuMem
 
