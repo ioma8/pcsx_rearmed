@@ -12,8 +12,9 @@
 
 #include "gpu.h"
 #include "psxdma.h"
+#include "../include/compiler_features.h"
 
-void gpu_state_change(int what, int cycles)
+hot_function void gpu_state_change(int what, int cycles)
 {
 	enum psx_gpu_state state = what;
 	switch (state)
@@ -26,7 +27,7 @@ void gpu_state_change(int what, int cycles)
 		break;
 	case PGS_PRIMITIVE_START:
 		// limit because gpulib delays things with it's buffering...
-		if (cycles > 512)
+		if (unlikely(cycles > 512))
 			cycles = 512;
 		psxRegs.gpuIdleAfter = psxRegs.cycle + cycles - 1;
 		break;
