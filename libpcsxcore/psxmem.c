@@ -27,6 +27,7 @@
 #include "psxmem_map.h"
 #include "r3000a.h"
 #include "psxhw.h"
+#include "../include/compiler_features.h"
 //#include "debug.h"
 #define DebugCheckBP(...)
 
@@ -366,24 +367,25 @@ u16 psxMemRead16(u32 mem) {
 	}
 }
 
-u32 psxMemRead32(u32 mem) {
-	char *p;
+hot_function u32 psxMemRead32(u32 mem) {
+	char *restrict p;
 	u32 t;
 
 	t = mem >> 16;
-	if (t == 0x1f80 || t == 0x9f80 || t == 0xbf80) {
-		if ((mem & 0xffff) < 0x400)
+	if (unlikely(t == 0x1f80 || t == 0x9f80 || t == 0xbf80)) {
+		if (likely((mem & 0xffff) < 0x400))
 			return psxHu32(mem);
 		else
 			return psxHwRead32(mem);
 	} else {
 		p = psxm(mem, 0);
-		if (p != INVALID_PTR) {
-			if (Config.Debug)
+		if (likely(p != INVALID_PTR)) {
+			if (unlikely(Config.Debug))
 				DebugCheckBP((mem & 0xffffff) | 0x80000000, R4);
+			preload(p, 0, 0);
 			return SWAPu32(*(u32 *)p);
 		} else {
-			if (mem == 0xfffe0130)
+			if (unlikely(mem == 0xfffe0130))
 				return psxRegs.biuReg;
 #ifdef PSXMEM_LOG
 			PSXMEM_LOG("err lw %8.8lx\n", mem);
@@ -393,20 +395,20 @@ u32 psxMemRead32(u32 mem) {
 	}
 }
 
-void psxMemWrite8(u32 mem, u32 value) {
-	char *p;
+hot_function void psxMemWrite8(u32 mem, u32 value) {
+	char *restrict p;
 	u32 t;
 
 	t = mem >> 16;
-	if (t == 0x1f80 || t == 0x9f80 || t == 0xbf80) {
-		if ((mem & 0xffff) < 0x400)
+	if (unlikely(t == 0x1f80 || t == 0x9f80 || t == 0xbf80)) {
+		if (likely((mem & 0xffff) < 0x400))
 			psxHu8(mem) = value;
 		else
 			psxHwWrite8(mem, value);
 	} else {
 		p = psxm(mem, 1);
-		if (p != INVALID_PTR) {
-			if (Config.Debug)
+		if (likely(p != INVALID_PTR)) {
+			if (unlikely(Config.Debug))
 				DebugCheckBP((mem & 0xffffff) | 0x80000000, W1);
 			*(u8 *)p = value;
 #ifndef DRC_DISABLE
@@ -420,20 +422,20 @@ void psxMemWrite8(u32 mem, u32 value) {
 	}
 }
 
-void psxMemWrite16(u32 mem, u32 value) {
-	char *p;
+hot_function void psxMemWrite16(u32 mem, u32 value) {
+	char *restrict p;
 	u32 t;
 
 	t = mem >> 16;
-	if (t == 0x1f80 || t == 0x9f80 || t == 0xbf80) {
-		if ((mem & 0xffff) < 0x400)
+	if (unlikely(t == 0x1f80 || t == 0x9f80 || t == 0xbf80)) {
+		if (likely((mem & 0xffff) < 0x400))
 			psxHu16ref(mem) = SWAPu16(value);
 		else
 			psxHwWrite16(mem, value);
 	} else {
 		p = psxm(mem, 1);
-		if (p != INVALID_PTR) {
-			if (Config.Debug)
+		if (likely(p != INVALID_PTR)) {
+			if (unlikely(Config.Debug))
 				DebugCheckBP((mem & 0xffffff) | 0x80000000, W2);
 			*(u16 *)p = SWAPu16(value);
 #ifndef DRC_DISABLE
@@ -447,28 +449,29 @@ void psxMemWrite16(u32 mem, u32 value) {
 	}
 }
 
-void psxMemWrite32(u32 mem, u32 value) {
-	char *p;
+hot_function void psxMemWrite32(u32 mem, u32 value) {
+	char *restrict p;
 	u32 t;
 
 //	if ((mem&0x1fffff) == 0x71E18 || value == 0x48088800) SysPrintf("t2fix!!\n");
 	t = mem >> 16;
-	if (t == 0x1f80 || t == 0x9f80 || t == 0xbf80) {
-		if ((mem & 0xffff) < 0x400)
+	if (unlikely(t == 0x1f80 || t == 0x9f80 || t == 0xbf80)) {
+		if (likely((mem & 0xffff) < 0x400))
 			psxHu32ref(mem) = SWAPu32(value);
 		else
 			psxHwWrite32(mem, value);
 	} else {
 		p = psxm(mem, 1);
-		if (p != INVALID_PTR) {
-			if (Config.Debug)
+		if (likely(p != INVALID_PTR)) {
+			if (unlikely(Config.Debug))
 				DebugCheckBP((mem & 0xffffff) | 0x80000000, W4);
+			preload(p, 1, 0);
 			*(u32 *)p = SWAPu32(value);
 #ifndef DRC_DISABLE
 			psxCpu->Clear(mem, 1);
 #endif
 		} else {
-			if (mem == 0xfffe0130) {
+			if (unlikely(mem == 0xfffe0130)) {
 				psxRegs.biuReg = value;
 				return;
 			}

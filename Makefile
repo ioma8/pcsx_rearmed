@@ -12,7 +12,9 @@ ifneq ($(DEBUG)$(DEBUG_SYMS), 00)
 CFLAGS += -ggdb
 endif
 ifneq ($(DEBUG), 1)
-CFLAGS += -O3
+CFLAGS += -Ofast -flto -funroll-loops -fomit-frame-pointer
+CFLAGS += -fno-stack-protector -fmerge-all-constants
+LDFLAGS += -flto -Ofast
 ifneq ($(ASSERTS), 1)
 CFLAGS += -DNDEBUG
 endif

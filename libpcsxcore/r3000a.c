@@ -112,7 +112,7 @@ void psxShutdown() {
 }
 
 // cp0 is passed separately for lightrec to be less messy
-void psxException(u32 cause, enum R3000Abdt bdt, psxCP0Regs *cp0) {
+cold_function void psxException(u32 cause, enum R3000Abdt bdt, psxCP0Regs *restrict cp0) {
 	u32 opcode = intFakeFetch(psxRegs.pc);
 	
 	if (unlikely(!Config.HLE && (opcode >> 25) == 0x25)) {
@@ -120,7 +120,7 @@ void psxException(u32 cause, enum R3000Abdt bdt, psxCP0Regs *cp0) {
 		// BIOS does not allow to return to GTE instructions
 		// (just skips it, supposedly because it's scheduled already)
 		// so we execute it here
-		psxCP2Regs *cp2 = (psxCP2Regs *)(cp0 + 1);
+		psxCP2Regs *restrict cp2 = (psxCP2Regs *)(cp0 + 1);
 		psxRegs.code = opcode;
 		psxCP2[opcode & 0x3f](cp2);
 	}
@@ -131,7 +131,7 @@ void psxException(u32 cause, enum R3000Abdt bdt, psxCP0Regs *cp0) {
 	// Set the EPC & PC
 	cp0->n.EPC = bdt ? psxRegs.pc - 4 : psxRegs.pc;
 
-	if (cp0->n.SR & 0x400000)
+	if (unlikely(cp0->n.SR & 0x400000))
 		psxRegs.pc = 0xbfc00180;
 	else
 		psxRegs.pc = 0x80000080;
@@ -140,8 +140,8 @@ void psxException(u32 cause, enum R3000Abdt bdt, psxCP0Regs *cp0) {
 	cp0->n.SR = (cp0->n.SR & ~0x3f) | ((cp0->n.SR & 0x0f) << 2);
 }
 
-void psxBranchTest() {
-	if ((psxRegs.cycle - psxRegs.psxNextsCounter) >= psxRegs.psxNextCounter)
+hot_function void psxBranchTest() {
+	if (unlikely((psxRegs.cycle - psxRegs.psxNextsCounter) >= psxRegs.psxNextCounter))
 		psxRcntUpdate();
 
 	irq_test(&psxRegs.CP0);

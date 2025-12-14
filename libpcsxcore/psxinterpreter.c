@@ -50,31 +50,31 @@ static void (INT_ATTR *psxBSC[64])(psxRegisters *regs_, u32 code);
 static void (INT_ATTR *psxSPC[64])(psxRegisters *regs_, u32 code);
 
 // load delay
-static void doLoad(psxRegisters *regs, u32 r, u32 val)
+static force_inline hot_function void doLoad(psxRegisters *restrict regs, u32 r, u32 val)
 {
 #ifdef HANDLE_LOAD_DELAY
 	int sel = regs->dloadSel ^ 1;
 	assert(regs->dloadReg[sel] == 0);
 	regs->dloadReg[sel] = r;
-	regs->dloadVal[sel] = r ? val : 0;
-	if (regs->dloadReg[sel ^ 1] == r)
+	regs->dloadVal[sel] = likely(r) ? val : 0;
+	if (unlikely(regs->dloadReg[sel ^ 1] == r))
 		regs->dloadVal[sel ^ 1] = regs->dloadReg[sel ^ 1] = 0;
 #else
-	regs->GPR.r[r] = r ? val : 0;
+	regs->GPR.r[r] = likely(r) ? val : 0;
 #endif
 }
 
-static void dloadRt(psxRegisters *regs, u32 r, u32 val)
+static force_inline hot_function void dloadRt(psxRegisters *restrict regs, u32 r, u32 val)
 {
 #ifdef HANDLE_LOAD_DELAY
 	int sel = regs->dloadSel;
 	if (unlikely(regs->dloadReg[sel] == r))
 		regs->dloadVal[sel] = regs->dloadReg[sel] = 0;
 #endif
-	regs->GPR.r[r] = r ? val : 0;
+	regs->GPR.r[r] = likely(r) ? val : 0;
 }
 
-static void dloadStep(psxRegisters *regs)
+static force_inline hot_function void dloadStep(psxRegisters *restrict regs)
 {
 #ifdef HANDLE_LOAD_DELAY
 	int sel = regs->dloadSel;
@@ -85,7 +85,7 @@ static void dloadStep(psxRegisters *regs)
 #endif
 }
 
-static void dloadFlush(psxRegisters *regs)
+static force_inline void dloadFlush(psxRegisters *restrict regs)
 {
 #ifdef HANDLE_LOAD_DELAY
 	regs->GPR.r[regs->dloadReg[0]] = regs->dloadVal[0];
@@ -96,7 +96,7 @@ static void dloadFlush(psxRegisters *regs)
 #endif
 }
 
-static void dloadClear(psxRegisters *regs)
+static force_inline void dloadClear(psxRegisters *restrict regs)
 {
 #ifdef HANDLE_LOAD_DELAY
 	regs->dloadVal[0] = regs->dloadVal[1] = 0;
@@ -105,9 +105,9 @@ static void dloadClear(psxRegisters *regs)
 #endif
 }
 
-static void intException(psxRegisters *regs, u32 pc, u32 cause)
+static cold_function void intException(psxRegisters *restrict regs, u32 pc, u32 cause)
 {
-	if (cause != 0x20) {
+	if (unlikely(cause != 0x20)) {
 		//FILE *f = fopen("/tmp/psx_ram.bin", "wb");
 		//fwrite(psxM, 1, 0x200000, f); fclose(f);
 		log_unhandled("exception %08x @%08x ra=%08x\n",
@@ -739,7 +739,7 @@ OP(psxJALRe) {
 	 (0xc0000000u <= (a) && (a) < 0xfffe0000u))
 
 // exception checking order is important
-static inline int checkLD(psxRegisters *regs, u32 addr, u32 m) {
+static force_inline hot_function int checkLD(psxRegisters *restrict regs, u32 addr, u32 m) {
 	int bpException = 0;
 	if (unlikely(DBR_EN_LD(regs->CP0.n.DCIC, addr) &&
 	    ((addr ^ regs->CP0.n.BDA) & regs->CP0.n.BDAM) == 0)) {
@@ -764,7 +764,7 @@ static inline int checkLD(psxRegisters *regs, u32 addr, u32 m) {
 	return 1;
 }
 
-static inline int checkST(psxRegisters *regs, u32 addr, u32 m) {
+static force_inline hot_function int checkST(psxRegisters *restrict regs, u32 addr, u32 m) {
 	int bpException = 0;
 	if (unlikely(DBR_EN_ST(regs->CP0.n.DCIC, addr) &&
 	    ((addr ^ regs->CP0.n.BDA) & regs->CP0.n.BDAM) == 0)) {

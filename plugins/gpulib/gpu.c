@@ -793,7 +793,7 @@ long GPUdmaChain(uint32_t *rambase, uint32_t start_addr,
   int cpu_cycles_sum = 0;
   int cpu_cycles_last = 0;
 
-  preload(rambase + (start_addr & 0x1fffff) / 4);
+  preload(rambase + (start_addr & 0x1fffff) / 4, 0, 0);
 
   if (unlikely(gpu.cmd_len > 0))
     flush_cmd_buffer(&gpu);
@@ -805,7 +805,7 @@ long GPUdmaChain(uint32_t *rambase, uint32_t start_addr,
     list = rambase + (addr & 0x1fffff) / 4;
     len = LE32TOH(list[0]) >> 24;
     addr = LE32TOH(list[0]) & 0xffffff;
-    preload(rambase + (addr & 0x1fffff) / 4);
+    preload(rambase + (addr & 0x1fffff) / 4, 0, 0);
 
     cpu_cycles_sum += 10;
     if (len > 0)

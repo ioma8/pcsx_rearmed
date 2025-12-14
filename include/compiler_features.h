@@ -2,19 +2,31 @@
 #ifdef __GNUC__
 # define likely(x)       __builtin_expect((x),1)
 # define unlikely(x)     __builtin_expect((x),0)
-# define preload         __builtin_prefetch
+# define preload(addr, rw, locality) __builtin_prefetch(addr, rw, locality)
 # ifdef __clang__
 #  define noinline       __attribute__((noinline))
 # else
 #  define noinline       __attribute__((noinline,noclone))
 # endif
 # define attr_unused     __attribute__((unused))
+# define force_inline    __attribute__((always_inline)) inline
+# define hot_function    __attribute__((hot))
+# define cold_function   __attribute__((cold))
+# define pure_function   __attribute__((pure))
+# define const_function  __attribute__((const))
+# define restrict        __restrict__
 #else
 # define likely(x)       (x)
 # define unlikely(x)     (x)
-# define preload         (x)
+# define preload(addr, rw, locality) ((void)0)
 # define noinline
 # define attr_unused
+# define force_inline    inline
+# define hot_function
+# define cold_function
+# define pure_function
+# define const_function
+# define restrict
 #endif
 
 // doesn't work on Android, mingw...

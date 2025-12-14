@@ -30,6 +30,7 @@
 #include "psxdma.h"
 #include "psxevents.h"
 #include "arm_features.h"
+#include "../include/compiler_features.h"
 
 /* logging */
 #if 0

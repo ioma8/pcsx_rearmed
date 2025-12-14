@@ -22,11 +22,12 @@
 */
 
 #include "decode_xa.h"
+#include "../include/compiler_features.h"
 
 #define FIXED
 
 #define NOT(_X_)				(!(_X_))
-#define XACLAMP(_X_,_MI_,_MA_)	{if(_X_<_MI_)_X_=_MI_;if(_X_>_MA_)_X_=_MA_;}
+#define XACLAMP(_X_,_MI_,_MA_)	{if(unlikely(_X_<_MI_))_X_=_MI_;if(unlikely(_X_>_MA_))_X_=_MA_;}
 
 #define SH	4
 #define SHC	10
@@ -50,14 +51,14 @@ static double K1[4] = {
     -0.859375
 };
 #else
-static int K0[4] = {
+static const int K0[4] = {
 	0.0       * (1<<SHC),
 	0.9375    * (1<<SHC),
 	1.796875  * (1<<SHC),
 	1.53125   * (1<<SHC)
 };
  
-static int K1[4] = {
+static const int K1[4] = {
 	0.0       * (1<<SHC),
 	0.0       * (1<<SHC),
 	-0.8125   * (1<<SHC),

@@ -24,6 +24,7 @@
 #include "psxcounters.h"
 #include "psxevents.h"
 #include "gpu.h"
+#include "../include/compiler_features.h"
 //#include "debug.h"
 #define DebugVSync()
 

@@ -23,6 +23,7 @@
 
 #include "psxdma.h"
 #include "gpu.h"
+#include "../include/compiler_features.h"
 
 #ifndef min
 #define min(a, b) ((b) < (a) ? (b) : (a))
@@ -34,25 +35,25 @@
 // Dma0/1 in Mdec.c
 // Dma3   in CdRom.c
 
-void spuInterrupt() {
-	if (HW_DMA4_CHCR & SWAP32(0x01000000))
+hot_function void spuInterrupt() {
+	if (unlikely(HW_DMA4_CHCR & SWAP32(0x01000000)))
 	{
 		HW_DMA4_CHCR &= SWAP32(~0x01000000);
 		DMA_INTERRUPT(4);
 	}
 }
 
-void psxDma4(u32 madr, u32 bcr, u32 chcr) { // SPU
+hot_function void psxDma4(u32 madr, u32 bcr, u32 chcr) { // SPU
 	u32 words, words_max = 0, words_copy;
-	u16 *ptr;
+	u16 *restrict ptr;
 
 	madr &= ~3;
 	ptr = getDmaRam(madr, &words_max);
-	if (ptr == INVALID_PTR)
+	if (unlikely(ptr == INVALID_PTR))
 		log_unhandled("bad dma4 madr %x\n", madr);
 
 	words = words_copy = (bcr >> 16) * (bcr & 0xffff);
-	if (words_copy > words_max) {
+	if (unlikely(words_copy > words_max)) {
 		log_unhandled("bad dma4 madr %x bcr %x\n", madr, bcr);
 		words_copy = words_max;
 	}
@@ -60,8 +61,9 @@ void psxDma4(u32 madr, u32 bcr, u32 chcr) { // SPU
 	switch (chcr) {
 		case 0x01000201: //cpu to spu transfer
 			PSXDMA_LOG("*** DMA4 SPU - mem2spu *** %x addr = %x size = %x\n", chcr, madr, bcr);
-			if (ptr == INVALID_PTR)
+			if (unlikely(ptr == INVALID_PTR))
 				break;
+			preload(ptr, 0, 0);
 			SPU_writeDMAMem(ptr, words_copy * 2, psxRegs.cycle);
 			HW_DMA4_MADR = SWAPu32(madr + words_copy * 2);
 			// This should be much slower, like 12+ cycles/byte, it's like
@@ -72,8 +74,9 @@ void psxDma4(u32 madr, u32 bcr, u32 chcr) { // SPU
 
 		case 0x01000200: //spu to cpu transfer
 			PSXDMA_LOG("*** DMA4 SPU - spu2mem *** %x addr = %x size = %x\n", chcr, madr, bcr);
-			if (ptr == INVALID_PTR)
+			if (unlikely(ptr == INVALID_PTR))
 				break;
+			preload(ptr, 1, 0);
 			SPU_readDMAMem(ptr, words_copy * 2, psxRegs.cycle);
 			psxCpu->Clear(madr, words_copy);
 
